@@ -1,0 +1,4 @@
+node_modules/
+data/
+tests/e2e/shots/
+*.tmp

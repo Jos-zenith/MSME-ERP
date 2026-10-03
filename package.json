@@ -1,0 +1,20 @@
+{
+  "name": "msme-builder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline-first low-code/no-code platform for MSMEs: forms, workflows, dashboards, billing.",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/build-sw.mjs && node server/server.js",
+    "build:sw": "node scripts/build-sw.mjs",
+    "test": "node --test \"tests/unit/*.test.mjs\"",
+    "test:e2e": "node tests/e2e/run.mjs",
+    "test:all": "npm test && npm run test:e2e",
+    "i18n:missing": "node scripts/extract-i18n.mjs --everyday --missing",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "engines": { "node": ">=18" },
+  "devDependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}
