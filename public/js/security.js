@@ -43,6 +43,10 @@ export async function setPin(store, role, pin) {
   store._persistMeta('security');
 }
 
+// Encrypted backups made before the rename to Vina say 'msme-builder-encrypted' and still open.
+export const ENCRYPTED_FORMAT = 'vina-encrypted';
+export const ENCRYPTED_FORMATS = [ENCRYPTED_FORMAT, 'msme-builder-encrypted'];
+
 // ---- encrypted backups ------------------------------------------------------------------------------------
 export async function encryptJson(obj, pass) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -50,7 +54,7 @@ export async function encryptJson(obj, pass) {
   const iterations = 250000;
   const key = await keyFrom(pass, salt, ['encrypt'], iterations);
   const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj)));
-  return { format: 'msme-builder-encrypted', version: 1, iterations, salt: b64(salt), iv: b64(iv), data: b64(data) };
+  return { format: ENCRYPTED_FORMAT, version: 1, iterations, salt: b64(salt), iv: b64(iv), data: b64(data) };
 }
 export async function decryptJson(box, pass) {
   const key = await keyFrom(pass, unb64(box.salt), ['decrypt'], box.iterations || 250000);

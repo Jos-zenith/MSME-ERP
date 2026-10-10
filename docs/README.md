@@ -1,6 +1,6 @@
 # Product docs
 
-MSME Builder started as an offline-first billing, stock and GST app for small Indian shops. These documents take it
+Vina (formerly MSME Builder) started as an offline-first billing, stock and GST app for small Indian shops. These documents take it
 from **recording money** to **moving and financing money**, on top of payment and verification APIs such as Decentro's.
 
 | Read | What it is | Status |
@@ -21,6 +21,6 @@ provider at the webhook URL. No provider credentials are in this repository.
 Tests that back the claims in these docs:
 
 ```
-npm test                          # 88 unit tests; tests/unit/collect.test.mjs and credit.test.mjs cover this work
+npm test                          # 89 unit tests; tests/unit/collect.test.mjs and credit.test.mjs cover this work
 npm run test:e2e                  # 27 browser scenarios; the last three cover Smart Collect and the Credit Passport
 ```

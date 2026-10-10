@@ -44,7 +44,7 @@ const text = (page) => page.evaluate(() => document.body.innerText);
 const clickText = (page, sel, label) => page.evaluate((s, l) => { const el = [...document.querySelectorAll(s)].find((e) => e.textContent.trim().includes(l)); if (!el) throw new Error(`no ${s} with text ${l}`); el.click(); }, sel, label);
 const shot = async (page, name) => { if (shotsDir) await page.screenshot({ path: path.join(shotsDir, `${name}.png`) }); };
 
-console.log('MSME Builder end-to-end tests');
+console.log('Vina end-to-end tests');
 srv = await startServer();
 
 // ===================================================================================================

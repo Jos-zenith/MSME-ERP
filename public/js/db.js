@@ -21,6 +21,8 @@ export function memoryDb() {
   };
 }
 
+// The on-device database keeps the name it had before the app was renamed to Vina: a new name would open an empty
+// database and hide every existing shop's records. It is never shown to anyone.
 export function idbDb(name = 'msme-builder') {
   let dbp;
   const open = () => (dbp ||= new Promise((resolve, reject) => {

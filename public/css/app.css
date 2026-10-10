@@ -1,4 +1,4 @@
-/* MSME Builder: one small stylesheet. System fonts only (fast on cheap phones; Indic scripts fall back natively).
+/* Vina: one small stylesheet. System fonts only (fast on cheap phones; Indic scripts fall back natively).
    Business-software density: 14px text, 34px controls, flat bordered surfaces, a dark navigation rail. */
 :root {
   color-scheme: light;

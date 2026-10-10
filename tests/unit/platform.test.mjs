@@ -104,7 +104,7 @@ test('service worker pre-caches every file the app needs (run `npm run build:sw`
 test('encrypted backup round-trips and rejects a wrong passphrase', async () => {
   const data = { hello: 'शर्मा स्टोर', n: [1, 2, 3] };
   const box = await encryptJson(data, 'correct horse');
-  assert.equal(box.format, 'msme-builder-encrypted');
+  assert.equal(box.format, 'vina-encrypted');
   assert.doesNotMatch(JSON.stringify(box), /शर्मा/);
   assert.deepEqual(await decryptJson(box, 'correct horse'), data);
   await assert.rejects(() => decryptJson(box, 'wrong'), /Wrong passphrase/);
@@ -112,7 +112,7 @@ test('encrypted backup round-trips and rejects a wrong passphrase', async () => 
 
 // ---- sync server ------------------------------------------------------------------------------------------------
 test('sync server: two devices converge, last edit wins, wrong passphrase refused, daily backup written', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-sync-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-sync-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?sync=${Date.now()}`);
   const server = await mod.start(0, '127.0.0.1');
@@ -160,7 +160,7 @@ test('sync server: two devices converge, last edit wins, wrong passphrase refuse
 });
 
 test('live sync: a change saved on one device reaches the other in about a second, without polling', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-live-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-live-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?live=${Date.now()}`);
   const server = await mod.start(0, '127.0.0.1');
@@ -200,7 +200,7 @@ test('live sync: a change saved on one device reaches the other in about a secon
 });
 
 test('sync server: rejects path traversal and oversized garbage', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-sync2-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-sync2-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?sec=${Date.now()}`);
   const server = await mod.start(0, '127.0.0.1');

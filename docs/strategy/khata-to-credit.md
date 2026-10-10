@@ -1,6 +1,6 @@
 # From khata to credit
 
-*Strategy memo · MSME Builder × payment and verification APIs (for example Decentro) · October 2026 · Status: proposal*
+*Strategy memo · Vina × payment and verification APIs (for example Decentro) · October 2026 · Status: proposal*
 
 ## The one-line version
 

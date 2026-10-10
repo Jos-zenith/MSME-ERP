@@ -315,3 +315,15 @@ test('backup round-trip restores everything', async () => {
   const next = await fresh.saveRecord('invoices', { items: [{ item: sugar.id, qty: 1 }] });
   assert.equal(next.record.data.number, 'INV-0002');
 });
+
+test('backups made before the rename to Vina still restore; anything else is refused', async () => {
+  const { store, sugar } = await shop();
+  await store.saveRecord('invoices', { items: [{ item: sugar.id, qty: 1 }] });
+  const backup = JSON.parse(JSON.stringify(store.exportAll()));
+  assert.equal(backup.format, 'vina-backup');
+  const old = new Store({ db: memoryDb() });
+  await old.init();
+  await old.importAll({ ...backup, format: 'msme-builder-backup' });
+  assert.equal(old.count('invoices'), 1);
+  await assert.rejects(() => old.importAll({ ...backup, format: 'something-else' }), /Not a valid backup file/);
+});

@@ -1,4 +1,4 @@
-// MSME Builder server: serves the app AND (optionally) keeps your devices in sync and backed up.
+// Vina server: serves the app AND (optionally) keeps your devices in sync and backed up.
 // Zero dependencies. Node 18+.   Run:  node server/server.js
 //
 //   PORT=8080  HOST=0.0.0.0  DATA_DIR=./data  ALLOW_NEW_WORKSPACES=true  CORS_ORIGIN=*  COLLECT_SANDBOX=true
@@ -154,7 +154,7 @@ function handleExport(body, ip) {
   const a = authenticate(body, ip);
   if (a.error) return a;
   const { doc } = a;
-  return { status: 200, json: { format: 'msme-builder-backup', version: 1, exported: new Date().toISOString(), app: doc.app, records: Object.values(doc.records).map(({ _seq, ...r }) => r) } };
+  return { status: 200, json: { format: 'vina-backup', version: 1, exported: new Date().toISOString(), app: doc.app, records: Object.values(doc.records).map(({ _seq, ...r }) => r) } };
 }
 
 // ---- Smart Collect: UPI payment confirmations from the collections provider ---------------------------------------------
@@ -336,7 +336,7 @@ export { server };
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   start().then(() => {
     const ips = Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address);
-    console.log(`MSME Builder is running.\n  On this computer:  http://localhost:${PORT}`);
+    console.log(`Vina is running.\n  On this computer:  http://localhost:${PORT}`);
     for (const ip of ips) console.log(`  On your Wi-Fi:     http://${ip}:${PORT}   (phones on the same Wi-Fi can open this)`);
     console.log(`Data is kept in ${DATA_DIR}\nTip: the app installs and works offline only from https:// or localhost. See README.`);
   });

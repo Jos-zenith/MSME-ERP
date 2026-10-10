@@ -1,6 +1,6 @@
 // Service worker: makes the app open instantly and work with no internet after the first visit.
 // The file list below is generated: run `npm run build:sw` after adding or renaming files (a test checks it).
-const VERSION = 'b81140cce2';
+const VERSION = '23bde298c0';
 const PRECACHE = [
   "./",
   "./css/app.css",
@@ -62,7 +62,7 @@ const PRECACHE = [
   "./manifest.webmanifest"
 ];
 
-const CACHE = `msme-builder-${VERSION}`;
+const CACHE = `vina-${VERSION}`;
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -72,7 +72,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('msme-builder-') && k !== CACHE).map((k) => caches.delete(k))))
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => (k.startsWith('vina-') || k.startsWith('msme-builder-')) && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });

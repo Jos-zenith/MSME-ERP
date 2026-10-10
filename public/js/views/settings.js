@@ -4,7 +4,7 @@ import { t, setLang, LANGS, getLang } from '../i18n.js';
 import { icon } from '../ui/icons.js';
 import { pageHeader, labeled, pill } from '../ui/bits.js';
 import { qrSvg, upiLink } from '../print.js';
-import { cryptoAvailable, setPin, lockEnabled, encryptJson, decryptJson } from '../security.js';
+import { cryptoAvailable, setPin, lockEnabled, encryptJson, decryptJson, ENCRYPTED_FORMATS } from '../security.js';
 import { TEMPLATES } from '../templates/index.js';
 import { usesGst, gstSettingsCard } from '../../gst/js/ui.js';
 import { gstinProblem } from '../../gst/js/gst.js';
@@ -89,12 +89,12 @@ export function settingsView(ctx) {
     h('p', t('Last backup:'), ' ', lastEl),
     h('p.hint', t('Your data lives on this device. A backup file is a full copy you can keep on a pen drive, email to yourself or upload to Google Drive. Back up at least once a week.')),
     h('div.row',
-      h('button.btn.primary', { onclick: () => { download(`shop-backup-${stamp()}.json`, JSON.stringify(store.exportAll())); markBackup(); } }, icon('download', { size: 15 }), t('Download backup')),
+      h('button.btn.primary', { onclick: () => { download(`vina-backup-${stamp()}.json`, JSON.stringify(store.exportAll())); markBackup(); } }, icon('download', { size: 15 }), t('Download backup')),
       secure ? h('button.btn', { onclick: async () => {
         const p = await promptDialog(t('Choose a passphrase. You will need it to restore. There is no way to recover it.'), '', { type: 'password' });
         if (!p) return;
         if (p.length < 6) { toast(t('Use at least 6 characters.'), { kind: 'warn' }); return; }
-        download(`shop-backup-${stamp()}.enc.json`, JSON.stringify(await encryptJson(store.exportAll(), p))); markBackup();
+        download(`vina-backup-${stamp()}.enc.json`, JSON.stringify(await encryptJson(store.exportAll(), p))); markBackup();
       } }, icon('lock', { size: 15 }), t('Download encrypted backup')) : null),
     h('div.restore', labeled(t('Restore from a backup file (replaces everything on this device)'), fileIn),
       h('button.btn', { onclick: async () => {
@@ -102,7 +102,7 @@ export function settingsView(ctx) {
         if (!f) { toast(t('Choose a backup file first.'), { kind: 'warn' }); return; }
         try {
           let data = JSON.parse(await f.text());
-          if (data.format === 'msme-builder-encrypted') {
+          if (ENCRYPTED_FORMATS.includes(data.format)) {
             const p = await promptDialog(t('Passphrase for this backup'), '', { type: 'password' });
             if (!p) return;
             data = await decryptJson(data, p);

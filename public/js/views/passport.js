@@ -40,7 +40,7 @@ export function passportView(ctx) {
     if (!p) { el.replaceChildren(emptyState('📄', t('No bills table'), t('The credit passport reads a table that keeps payments and a balance, like Sales invoices.'))); return; }
     const [bandLabel, tone] = BAND[p.band];
     const m = p.metrics;
-    const exportBtn = h('button.btn.primary', { onclick: () => download(`credit-passport-${p.today}.json`, JSON.stringify(passportExport(p, store.business), null, 2)) },
+    const exportBtn = h('button.btn.primary', { onclick: () => download(`vina-credit-passport-${p.today}.json`, JSON.stringify(passportExport(p, store.business), null, 2)) },
       icon('download', { size: 15 }), t('Download passport'));
     const factorsById = Object.fromEntries(p.factors.map((f) => [f.id, f]));
 

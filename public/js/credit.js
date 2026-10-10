@@ -12,7 +12,7 @@ import { toNum, todayStr, addDays, daysBetween, round } from './formula.js';
 import { collectSetup } from './collect.js';
 import { docOf, validateGstin } from '../gst/js/gst.js';
 
-export const PASSPORT_FORMAT = 'msme-credit-passport';
+export const PASSPORT_FORMAT = 'vina-credit-passport';
 export const NAYAK_SHARE = 0.2;
 export const BANDS = [[75, 'strong', 1], [60, 'good', 0.75], [40, 'fair', 0.5], [0, 'building', 0.25]];
 const r2 = (n) => round(n, 2);

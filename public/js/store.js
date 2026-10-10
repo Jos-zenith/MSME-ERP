@@ -9,6 +9,9 @@ import { todayStr, toNum } from './formula.js';
 import { t } from './i18n.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
+// Backup files say what they are. Files made before the app was renamed to Vina say 'msme-builder-backup' and still restore.
+export const BACKUP_FORMAT = 'vina-backup';
+export const BACKUP_FORMATS = [BACKUP_FORMAT, 'msme-builder-backup'];
 const enc = encodeURIComponent;
 
 /** wa.me / sms: / mailto: link. Works with a normal WhatsApp app: no paid API needed. */
@@ -432,10 +435,10 @@ export class Store {
   exportAll() {
     const records = [];
     for (const m of this.byTable.values()) for (const r of m.values()) records.push(r);
-    return { format: 'msme-builder-backup', version: 1, exported: this.now(), app: this.app, counters: this.meta.counters, records };
+    return { format: BACKUP_FORMAT, version: 1, exported: this.now(), app: this.app, counters: this.meta.counters, records };
   }
   async importAll(bk) {
-    if (bk?.format !== 'msme-builder-backup' || !bk.app) throw new Error('Not a valid backup file');
+    if (!BACKUP_FORMATS.includes(bk?.format) || !bk.app) throw new Error('Not a valid backup file');
     await this.db.wipe();
     this.byTable.clear(); this.outbox.clear();
     const device = this.meta.device;

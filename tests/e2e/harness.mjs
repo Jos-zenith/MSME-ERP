@@ -13,7 +13,7 @@ const CHROME = [
 ].find((p) => p && fs.existsSync(p));
 
 export async function startServer() {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-e2e-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-e2e-'));
   process.env.DATA_DIR = dataDir;
   const mod = await import(`../../server/server.js?e2e=${Date.now()}`);
   const server = await mod.start(0, '127.0.0.1');

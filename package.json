@@ -1,8 +1,8 @@
 {
-  "name": "msme-builder",
+  "name": "vina",
   "version": "0.1.0",
   "private": true,
-  "description": "Offline-first low-code/no-code platform for MSMEs: forms, workflows, dashboards, billing.",
+  "description": "Vina: offline-first billing, stock and GST for Indian MSMEs, with UPI that confirms itself (Smart Collect) and a Credit Passport. Low-code: forms, workflows, dashboards.",
   "type": "module",
   "scripts": {
     "start": "node scripts/build-sw.mjs && node server/server.js",

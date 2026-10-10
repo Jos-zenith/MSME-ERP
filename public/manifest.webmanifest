@@ -1,6 +1,6 @@
 {
-  "name": "MSME Builder",
-  "short_name": "MSME Builder",
+  "name": "Vina: billing, UPI & credit for shops",
+  "short_name": "Vina",
   "description": "Build your own billing, stock, orders and service apps without code. Works offline.",
   "start_url": "./",
   "scope": "./",

@@ -184,7 +184,7 @@ test('collect: works on the GST template, and older shops get the UTR column onc
 
 // ---- server: the webhook -------------------------------------------------------------------------------------------------
 test('collect server: signed webhook -> record on every device; bad signatures, retries and forgeries change nothing', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-collect-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-collect-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?collect=${Date.now()}`);
   const server = await mod.start(0, '127.0.0.1');

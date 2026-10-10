@@ -80,7 +80,7 @@ owner could get paid early (for example through TReDS, where the buyer is on it)
 
 ## 5. The export (built)
 
-`credit-passport-YYYY-MM-DD.json`, format `msme-credit-passport` v1:
+`vina-credit-passport-YYYY-MM-DD.json`, format `vina-credit-passport` v1:
 
 - business name, GSTIN (only if valid), state
 - **consent:** purpose ("Working-capital loan assessment"), `validUntil` (30 days), and a plain statement of what it
