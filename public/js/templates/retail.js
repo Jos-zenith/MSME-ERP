@@ -1,6 +1,6 @@
 // Retail / kirana starter: customers, items & stock, sales invoices with payments, purchases, tasks,
 // plus the workflows and dashboards a shop owner needs on day one.
-import { F, baseSettings, tasksTable, STATUS_COLORS, makeApp, cond } from './common.js';
+import { F, baseSettings, tasksTable, STATUS_COLORS, makeApp, cond, collectedToday, billedToday, pendingSub, walkInSale } from './common.js';
 import { todayStr, addDays } from '../formula.js';
 
 export function retail(t, o = {}) {
@@ -31,15 +31,15 @@ export function retail(t, o = {}) {
   };
 
   const items = {
-    id: 'items', name: t('Items & stock'), icon: '📦',
-    titleField: 'name', labelFields: ['code', 'name'],
+    id: 'items', name: t('Items & stock'), icon: '📦', staff: 'view',
+    titleField: 'name', labelFields: ['code', 'name'], focusField: 'name',
     // code first: an exact code (or barcode) match is always the top result, so Enter picks it.
     searchFields: ['code', 'barcode', 'name'], subFields: ['price', 'stock'],
     listColumns: ['code', 'name', 'price', 'stock', 'reorder'],
     fields: [
-      F('code', t('Item code'), 'text', { required: true, unique: true, width: 'half' }),
-      F('barcode', t('Barcode'), 'text', { width: 'half' }),
       F('name', t('Item name'), 'text', { required: true }),
+      F('code', t('Item code'), 'text', { unique: true, autoCode: 'name', width: 'half', hint: t('Leave empty: one is made from the name') }),
+      F('barcode', t('Barcode'), 'text', { width: 'half', remember: false }),
       F('unit', t('Unit'), 'select', { options: [t('pcs'), t('kg'), t('litre'), t('box'), t('dozen')], default: t('pcs'), width: 'third' }),
       F('price', t('Selling price'), 'money', { required: true, width: 'third' }),
       F('cost', t('Buying price'), 'money', { width: 'third' }),
@@ -54,7 +54,7 @@ export function retail(t, o = {}) {
     id: 'invoices', name: t('Sales invoices'), icon: '🧾', quick: true,
     titleField: 'number', labelFields: ['number'], searchFields: ['number'],
     listColumns: ['number', 'date', 'customer', 'total', 'balance', 'status'],
-    statusField: 'status', sort: { field: 'date', dir: 'desc' }, focusField: 'items',
+    statusField: 'status', sort: { field: 'date', dir: 'desc' }, focusField: 'items', walkIn: walkInSale(cash),
     fields: [
       F('number', t('Invoice no.'), 'text', { auto: { prefix: 'INV-', pad: 4 }, width: 'half' }),
       F('date', t('Date'), 'date', { default: 'today', required: true, width: 'half' }),
@@ -83,6 +83,7 @@ export function retail(t, o = {}) {
           F('pdate', t('Date'), 'date', { default: 'today' }),
           F('mode', t('Mode'), 'select', { options: [cash, upi, card, bank], default: cash }),
           F('amount', t('Amount'), 'money'),
+          F('ref', t('UTR / ref'), 'text', { remember: false }),   // bank reference; Smart Collect fills it in
         ],
       }),
       F('paid', t('Paid'), 'money', { formula: 'SUM(payments.amount)' }),
@@ -90,7 +91,7 @@ export function retail(t, o = {}) {
       F('status', t('Payment status'), 'select', {
         options: [unpaid, partial, paid],
         colors: STATUS_COLORS([paid], [partial], [unpaid]),
-        formula: `IF(balance <= 0, "${paid}", IF(paid > 0, "${partial}", "${unpaid}"))`,
+        formula: `IF(total <= 0 and paid <= 0, "", IF(balance <= 0, "${paid}", IF(paid > 0, "${partial}", "${unpaid}")))`,
       }),
       F('due_date', t('Payment due date'), 'date', { width: 'half', hint: t('For credit sales: reminders start after this date') }),
       F('notes', t('Notes'), 'longtext'),
@@ -104,7 +105,7 @@ export function retail(t, o = {}) {
   };
 
   const purchases = {
-    id: 'purchases', name: t('Purchases'), icon: '🚚',
+    id: 'purchases', name: t('Purchases'), icon: '🚚', staff: 'none',
     titleField: 'number', labelFields: ['number'], searchFields: ['number', 'supplier'],
     listColumns: ['number', 'date', 'supplier', 'total'], sort: { field: 'date', dir: 'desc' }, focusField: 'items',
     fields: [
@@ -198,9 +199,9 @@ export function retail(t, o = {}) {
   const dashboards = [{
     id: 'd_main', name: t('Business overview'), ownerOnly: true,
     widgets: [
-      { id: 'w1', type: 'kpi', title: t('Sales today'), table: 'invoices', period: 'today', dateField: 'date', measure: { op: 'sum', field: 'total' } },
-      { id: 'w2', type: 'kpi', title: t('Bills today'), table: 'invoices', period: 'today', dateField: 'date', measure: { op: 'count' } },
-      { id: 'w3', type: 'kpi', title: t('Payments pending'), table: 'invoices', period: 'all', measure: { op: 'sum', field: 'balance' }, conditions: [cond('balance', '>', 0)] },
+      collectedToday(t),
+      billedToday(t, 'w1b'),
+      { id: 'w3', type: 'kpi', title: t('Payments pending'), table: 'invoices', period: 'all', measure: { op: 'sum', field: 'balance' }, conditions: [cond('balance', '>', 0)], sub: pendingSub(t) },
       { id: 'w4', type: 'kpi', title: t('Items low on stock'), table: 'items', period: 'all', measure: { op: 'count' }, conditions: [cond('stock', '<=', 'reorder', 'field')] },
       { id: 'w5', type: 'bar', title: t('Sales — last 7 days'), table: 'invoices', period: '7d', dateField: 'date', span: 2, measure: { op: 'sum', field: 'total' }, group: { field: 'date', by: 'day' } },
       { id: 'w6', type: 'bar', title: t('Best-selling items — last 30 days'), table: 'invoices', lines: 'items', period: '30d', dateField: 'date', span: 2, limit: 5, measure: { op: 'sum', field: 'amount' }, group: { field: 'item' } },

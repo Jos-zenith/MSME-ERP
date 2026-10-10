@@ -159,6 +159,46 @@ test('sync server: two devices converge, last edit wins, wrong passphrase refuse
   } finally { await new Promise((r) => server.close(r)); }
 });
 
+test('live sync: a change saved on one device reaches the other in about a second, without polling', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-live-'));
+  process.env.DATA_DIR = dir;
+  const mod = await import(`../../server/server.js?live=${Date.now()}`);
+  const server = await mod.start(0, '127.0.0.1');
+  const url = `http://127.0.0.1:${server.address().port}`;
+  const waitFor = async (fn, ms = 3000) => { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await new Promise((r) => setTimeout(r, 25)); } return false; };
+  let clock = 1000;
+  const mk = async () => {
+    const s = new Store({ db: memoryDb(), now: () => new Date(Date.UTC(2026, 8, 19, 10, 0, clock++)).toISOString() });
+    await s.init();
+    return { s, sync: new Sync(s, { pushDelay: 50 }) };
+  };
+  const A = await mk(), B = await mk();
+  try {
+    A.s.setApp(buildTemplate('retail', (x) => x, { businessName: 'Live Mart' }));
+    A.sync.configure({ url, ws: 'live', token: 'passphrase' });
+    await A.sync.run();
+    B.sync.configure({ url, ws: 'live', token: 'passphrase', adopt: true });
+    await B.sync.run();
+
+    // B listens on the live feed only: no interval, no manual run()
+    B.sync.connectLive();
+    assert.ok(await waitFor(() => B.sync.live), 'live feed connected');
+
+    const t0 = Date.now();
+    const c = (await A.s.saveRecord('customers', { name: 'Live Lata', phone: '9000000077' })).record;
+    await A.sync.run();
+    assert.ok(await waitFor(() => B.s.getRecord('customers', c.id)), 'record arrived on B through the live feed');
+    assert.ok(Date.now() - t0 < 2000, `arrived in ${Date.now() - t0} ms`);
+
+    // a wrong passphrase never gets a feed
+    const bad = await fetch(`${url}/api/live`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: 'live', token: 'wrong-pass' }) });
+    assert.equal(bad.status, 403);
+  } finally {
+    B.sync.stopLive();
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('sync server: rejects path traversal and oversized garbage', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'msme-sync2-'));
   process.env.DATA_DIR = dir;

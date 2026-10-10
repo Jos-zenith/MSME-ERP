@@ -38,7 +38,7 @@ export async function launch({ url, viewport = { width: 1280, height: 900 }, lan
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Complete onboarding with the retail template + sample data. */
-export async function onboard(page, { name = 'Test Mart', phone = '9876500001', upi = 'testmart@upi', template = 'retail', sample = true } = {}) {
+export async function onboard(page, { name = 'Test Mart', phone = '9876500001', upi = 'testmart@upi', template = 'retail', sample = true, gstin = '' } = {}) {
   await page.waitForSelector('.onboard-card .lang-grid');
   await page.evaluate(() => [...document.querySelectorAll('.lang-grid button')].find((b) => b.textContent.trim() === 'English').click());
   await page.waitForSelector('.onboard-card input');
@@ -46,8 +46,9 @@ export async function onboard(page, { name = 'Test Mart', phone = '9876500001', 
   await inputs[0].type(name); await inputs[1].type(phone); await inputs[2].type(upi);
   await page.evaluate(() => [...document.querySelectorAll('.onboard-card button')].find((b) => b.textContent.trim() === 'Next').click());
   await page.waitForSelector('.tpl-grid');
-  await page.evaluate((tpl) => { const idx = { retail: 0, service: 1, blank: 2 }[tpl]; document.querySelectorAll('.tpl-grid .tile')[idx].click(); }, template);
-  await page.waitForSelector('.tpl-grid .tile.sel');
+  await page.evaluate((tpl) => document.querySelector(`.tpl-grid .tile[data-tpl=${tpl}]`).click(), template);
+  await page.waitForSelector(`.tpl-grid .tile.sel[data-tpl=${template}]`);
+  if (gstin) { await page.waitForSelector('.gstin-input'); await page.type('.gstin-input', gstin); }
   if (!sample) await page.evaluate(() => { document.querySelector('.onboard-card input[type=checkbox]').click(); });
   await page.evaluate(() => [...document.querySelectorAll('.onboard-card button')].find((b) => b.textContent.trim() === 'Start').click());
   await page.waitForSelector('.topbar');

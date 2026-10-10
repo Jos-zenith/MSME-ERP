@@ -2,12 +2,22 @@
 import { h, toast, confirmDialog, debounce, $ } from '../ui/dom.js';
 import { t } from '../i18n.js';
 import { buildForm } from '../ui/form.js';
-import { pageHeader, pill, emptyState, sendCard } from '../ui/bits.js';
+import { pageHeader, pill, emptyState, sendCard, remindButton } from '../ui/bits.js';
 import { buildDocument, paymentQr } from '../print.js';
-import { formatValue, fieldOf, recordTitle, isBlank, makeScope, newRow, fmtDate, defaultsFor } from '../schema.js';
+import { formatValue, fieldOf, recordTitle, isBlank, makeScope, newRow, fmtDate, defaultsFor, repeatData, hooksFor } from '../schema.js';
 import { tryEvaluate, isTruthy, toNum, todayStr } from '../formula.js';
 import { widgetCard } from './reports.js';
 import { openImport, exportCsv } from './importer.js';
+import { gstHomeCard } from '../../gst/js/ui.js';
+import { icon, iconFor } from '../ui/icons.js';
+import { posTable } from './pos.js';
+import { collectOn } from '../collect.js';
+import { paymentsAttention } from './payments.js';
+
+// ---- who may do what: owner always; staff per table (`staff: 'full' | 'view' | 'none'`) ------------------------
+export const canSee = (ctx, table) => ctx.role === 'owner' || (table?.staff || 'full') !== 'none';
+export const canEdit = (ctx, table) => ctx.role === 'owner' || (table?.staff || 'full') === 'full';
+const ownerOnlyPage = () => emptyState('🔒', t('Only the owner can open this'), '', h('a.btn', { href: '#/' }, t('Home')));
 
 // ---- shared cell renderer ----------------------------------------------------------------------
 export function valueNode(store, f, v, { rec } = {}) {
@@ -24,7 +34,7 @@ export function homeView(ctx) {
   const el = h('div.home');
   const paint = () => {
     el.replaceChildren();
-    const quick = store.app.tables.filter((x) => x.quick);
+    const quick = store.app.tables.filter((x) => x.quick && canEdit(ctx, x));
     const pendingMsgs = store.listOutbox((o) => o.status === 'pending' && o.channel !== 'webhook' && o.channel !== 'inapp').length;
     const alerts = store.listOutbox((o) => o.status === 'pending' && o.channel === 'inapp').length;
     const approvals = store.pendingApprovals().length;
@@ -34,16 +44,33 @@ export function homeView(ctx) {
     const dash = store.app.dashboards?.find((d) => !d.ownerOnly || ctx.role === 'owner');
     const kpis = dash?.widgets.filter((w) => w.type === 'kpi') || [];
 
+    const chart = dash?.widgets.find((w) => w.type === 'bar' && w.group?.by === 'day');
+    const [main, ...others] = quick;
+    const pos = posTable(store);
+
     el.append(
-      h('div.hello', h('h1', store.business.name || store.app.name), h('div.muted', fmtDate(today))),
-      quick.length ? h('div.quick-actions', quick.map((q) => h('a.big-btn', { href: `#/t/${q.id}/new` }, h('span.ic', q.icon || '＋'), h('span', `＋ ${q.name}`)))) : null,
-      kpis.length ? h('div.kpi-row', kpis.map((w) => widgetCard(store, w, { compact: true }))) : null,
-      h('div.attention',
-        attn('💬', t('Messages to send'), pendingMsgs, '#/outbox', 'messages'),
-        attn('🔔', t('Alerts'), alerts, '#/outbox/alerts', 'alerts'),
-        attn('🖊️', t('Waiting for your approval'), approvals, '#/outbox/approvals', 'approvals'),
-        tasksTbl ? attn('✅', t('Tasks due'), tasksDue, '#/t/tasks', 'tasks') : null),
-      quick.length ? recent(store, quick) : null,
+      // header: what this screen is, and THE action of the screen (N opens it from anywhere)
+      h('div.page-head.home-head',
+        h('div.page-title', h('h1', t('Dashboard')), h('div.page-sub', `${store.business.name || store.app.name} · ${fmtDate(today)}`)),
+        h('div.page-actions',
+          (pos ? quick : others).map((q) => h('a.btn', { href: `#/t/${q.id}/new` }, icon('plus', { size: 16 }), q.newLabel || q.name)),
+          pos ? h('a.big-btn.primary', { href: '#/pos' }, icon('scan', { size: 18 }), h('span', t('Open billing counter')), h('kbd', { title: t('Press N from anywhere') }, 'N'))
+            : main ? h('a.big-btn.primary', { href: `#/t/${main.id}/new` }, icon('plus', { size: 18 }), h('span', `${t('New')}: ${main.newLabel || main.name}`),
+              h('kbd', { title: t('Press N from anywhere') }, 'N')) : null)),
+      kpis.length ? h('section.kpi-strip', { 'aria-label': t('Today') }, kpis.map((w) => widgetCard(store, w, { compact: true }))) : null,
+      h('div.home-grid',
+        h('div.home-main',
+          main ? receivables(store, main) : null,
+          quick.length ? recent(store, quick) : null,
+          chart ? widgetCard(store, chart) : null),
+        h('aside.home-side',
+          h('section.card.attention', h('div.card-head', h('h3', t('Needs attention'))),
+            attn('message', t('Messages to send'), pendingMsgs, '#/outbox', 'messages'),
+            attn('alert', t('Alerts'), alerts, '#/outbox/alerts', 'alerts'),
+            attn('pen', t('Waiting for your approval'), approvals, '#/outbox/approvals', 'approvals'),
+            tasksTbl ? attn('tasks', t('Tasks due'), tasksDue, '#/t/tasks', 'tasks') : null,
+            collectOn(store) ? attn('wallet', t('Payments to check'), paymentsAttention(store), '#/outbox/payments', 'payments') : null),
+          ctx.role === 'owner' ? gstHomeCard(store) : null)),
       !store.app.tables.length ? emptyState('🧱', t('Nothing here yet'), t('Open the App builder to create your first table.'), h('a.btn.primary', { href: '#/build' }, t('App builder'))) : null,
     );
   };
@@ -51,17 +78,52 @@ export function homeView(ctx) {
   ctx.watch(debounce(paint, 60));
   return el;
 }
-const attn = (icon, label, n, href, key) => h('a.attn-card', { href, class: n ? 'has' : '', dataset: { key } }, h('span.ic', icon), h('span.n', String(n)), h('span.l', label));
+const attn = (ic, label, n, href, key) => h('a.attn-card', { href, class: n ? 'has' : '', dataset: { key } }, icon(ic), h('span.l', label), h('span.n', String(n)), icon('chevron', { size: 16 }));
 
+/** Receivables at a glance (unpaid money, current vs overdue), for a table that keeps a balance. */
+function receivables(store, tb) {
+  if (!tb.fields.some((f) => f.id === 'balance')) return null;
+  const today = todayStr();
+  const money = fieldOf(tb, 'balance');
+  const open = store.records(tb.id).filter((r) => toNum(r.data.balance) > 0);
+  const total = open.reduce((s, r) => s + toNum(r.data.balance), 0);
+  const overdue = open.filter((r) => r.data.due_date && r.data.due_date < today).reduce((s, r) => s + toNum(r.data.balance), 0);
+  const fmt = (v) => formatValue(money, v, store.ctx());
+  const pct = total ? Math.round((overdue / total) * 100) : 0;
+  return h('section.card.recv',
+    h('div.card-head', h('h3', t('Receivables')), h('a.link.tiny', { href: `#/t/${tb.id}` }, t('View all'))),
+    h('div.recv-total', h('span.recv-lbl', t('Total unpaid')), h('b', fmt(total)), h('span.muted', t('{n} unpaid bills, all dates', { n: open.length }))),
+    h('div.recv-bar', { role: 'img', 'aria-label': `${t('Current')} ${fmt(total - overdue)}, ${t('Overdue')} ${fmt(overdue)}` },
+      h('span.recv-cur', { style: `width:${100 - pct}%` }), h('span.recv-over', { style: `width:${pct}%` })),
+    h('div.recv-legend',
+      h('span', h('i.dot.cur'), `${t('Current')} `, h('b', fmt(total - overdue))),
+      h('span', h('i.dot.over'), `${t('Overdue')} `, h('b', fmt(overdue)))));
+}
+
+const partyName = (store, f, d) => { const r = f && d[f.id] ? store.getRecord(f.ref, d[f.id]) : null; const pt = r && store.table(f.ref); return r && pt ? String(r.data[pt.titleField] ?? '') : ''; };
+
+/** The latest bills as a proper table: date, number, party, status, amount. */
 function recent(store, tables) {
   const rows = tables.flatMap((tb) => store.records(tb.id).map((r) => ({ tb, r })))
     .sort((a, b) => (a.r.updated < b.r.updated ? 1 : -1)).slice(0, 6);
   if (!rows.length) return null;
-  return h('section.card', h('h3', t('Recent')),
-    h('ul.recent', rows.map(({ tb, r }) => h('li', h('a', { href: `#/t/${tb.id}/${r.id}` },
-      h('span.ic', tb.icon || ''), h('b', recordTitle(tb, r)),
-      tb.statusField ? valueNode(store, fieldOf(tb, tb.statusField), r.data[tb.statusField]) : null,
-      tb.fields.find((f) => f.id === 'total') ? h('span.amt', formatValue(fieldOf(tb, 'total'), r.data.total, store.ctx())) : null)))));
+  const c = store.ctx();
+  return h('section.card.recent-card',
+    h('div.card-head', h('h3', t('Recent transactions')), tables.length === 1 ? h('a.link.tiny', { href: `#/t/${tables[0].id}` }, t('View all')) : null),
+    h('table.data.compact',
+      h('thead', h('tr', h('th', t('Date')), h('th', t('Number')), h('th', t('Customer')), h('th', t('Status')), h('th.num', t('Amount')))),
+      h('tbody', rows.map(({ tb, r }) => {
+        const dateF = tb.fields.find((f) => f.type === 'date');
+        const party = tb.fields.find((f) => f.type === 'lookup');
+        const total = tb.fields.find((f) => f.id === 'total');
+        const go = () => { location.hash = `#/t/${tb.id}/${r.id}`; };
+        return h('tr.row', { tabindex: 0, onclick: go, onkeydown: (e) => { if (e.key === 'Enter') go(); } },
+          h('td.muted', dateF ? fmtDate(r.data[dateF.id]) : ''),
+          h('td', h('a', { href: `#/t/${tb.id}/${r.id}` }, recordTitle(tb, r))),
+          h('td', partyName(store, party, r.data) || h('span.muted', t('Walk-in customer'))),
+          h('td', tb.statusField ? valueNode(store, fieldOf(tb, tb.statusField), r.data[tb.statusField]) : ''),
+          h('td.num', total ? formatValue(total, r.data.total, c) : ''));
+      }))));
 }
 
 // ---- list --------------------------------------------------------------------------------------
@@ -69,20 +131,24 @@ export function listView(ctx, tableId) {
   const { store } = ctx;
   const table = store.table(tableId);
   if (!table) return emptyState('❓', t('Not found'), '', h('a.btn', { href: '#/' }, t('Home')));
+  if (!canSee(ctx, table)) return ownerOnlyPage();
+  const editable = canEdit(ctx, table);
   const cols = (table.listColumns?.length ? table.listColumns : table.fields.slice(0, 4).map((f) => f.id)).map((id) => fieldOf(table, id)).filter(Boolean);
   const st = { q: '', status: '', sort: table.sort?.field || '', dir: table.sort?.dir || 'desc', limit: 50 };
   const sf = table.statusField ? fieldOf(table, table.statusField) : null;
   const ctx2 = store.ctx();
+  const canRemind = table.fields.some((f) => f.id === 'balance') && table.fields.some((f) => f.type === 'phone');
 
   const search = h('input.search', { type: 'search', placeholder: t('Search…'), 'aria-label': t('Search'), oninput: debounce((e) => { st.q = e.target.value; st.limit = 50; paintBody(); }, 120) });
-  const chips = h('div.chips');
+  const chips = h('div.chips.seg');
   const body = h('div.list-body');
+  const countLine = h('span');
   const el = h('div.list',
-    pageHeader(`${table.icon || ''} ${table.name}`,
-      h('a.btn.primary', { href: `#/t/${tableId}/new` }, `＋ ${t('New')}`),
-      ctx.role === 'owner' ? h('button.btn', { onclick: () => openImport(store, table, () => paintBody()) }, t('Import')) : null,
-      ctx.role === 'owner' ? h('button.btn', { onclick: () => exportCsv(store, table) }, t('Export')) : null),
-    h('div.toolbar', search, chips), body);
+    pageHeader({ title: table.name, icon: iconFor(table.icon, { size: 20 }), sub: countLine },
+      ctx.role === 'owner' ? h('button.btn', { onclick: () => openImport(store, table, () => paintBody()) }, icon('upload', { size: 16 }), t('Import')) : null,
+      ctx.role === 'owner' ? h('button.btn', { onclick: () => exportCsv(store, table) }, icon('download', { size: 16 }), t('Export')) : null,
+      editable ? h('a.btn.primary', { href: `#/t/${tableId}/new` }, icon('plus', { size: 16 }), t('New')) : pill(t('View only'), 'muted')),
+    h('div.toolbar', h('div.search-box', icon('search', { size: 16 }), search), chips), body);
 
   const sortVal = (r, fid) => {
     if (!fid) return r.created;
@@ -117,20 +183,22 @@ export function listView(ctx, tableId) {
   function paintBody() {
     const rows = filtered();
     body.replaceChildren();
+    countLine.textContent = t('{n} records', { n: store.count(tableId) });
     if (!store.count(tableId)) {
       body.append(emptyState(table.icon || '📄', t('No records yet'), t('Add your first one to get started.'), h('a.btn.primary', { href: `#/t/${tableId}/new` }, `＋ ${t('New')}`)));
       return;
     }
     if (!rows.length) { body.append(h('p.muted.center', t('Nothing matches your search.'))); return; }
     const head = h('tr', cols.map((c) => h('th', { class: c.type === 'money' || c.type === 'number' ? 'num' : '', 'aria-sort': st.sort === c.id ? (st.dir === 'asc' ? 'ascending' : 'descending') : 'none' },
-      h('button.th-btn', { onclick: () => { st.dir = st.sort === c.id && st.dir === 'asc' ? 'desc' : 'asc'; st.sort = c.id; paintBody(); } }, c.label, st.sort === c.id ? (st.dir === 'asc' ? ' ▲' : ' ▼') : ''))));
+      h('button.th-btn', { onclick: () => { st.dir = st.sort === c.id && st.dir === 'asc' ? 'desc' : 'asc'; st.sort = c.id; paintBody(); } }, c.label, st.sort === c.id ? (st.dir === 'asc' ? ' ▲' : ' ▼') : ''))), canRemind ? h('th.act', h('span.sr', t('Remind'))) : null);
     const tb = h('tbody', rows.slice(0, st.limit).map((r) => {
       const go = () => { location.hash = `#/t/${tableId}/${r.id}`; };
       return h('tr.row', { tabindex: 0, onclick: (e) => { if (!e.target.closest('a,input,button')) go(); }, onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) go(); } },
         cols.map((c) => h('td', { class: c.type === 'money' || c.type === 'number' ? 'num' : '', dataset: { label: c.label } },
           c.type === 'checkbox'
             ? h('input', { type: 'checkbox', checked: !!r.data[c.id], 'aria-label': c.label, onchange: (e) => store.patchRecord(tableId, r.id, { [c.id]: e.target.checked }) })
-            : valueNode(store, c, r.data[c.id]))));
+            : valueNode(store, c, r.data[c.id]))),
+        canRemind ? h('td.act', remindButton(store, tableId, r.id, { small: true })) : null);
     }));
     body.append(h('div.table-wrap', h('table.data', h('thead', head), tb)),
       h('div.list-foot', h('span.muted', t('{n} records', { n: rows.length })),
@@ -147,13 +215,23 @@ export function formView(ctx, tableId, id) {
   const table = store.table(tableId);
   const rec = id ? store.getRecord(tableId, id) : null;
   if (!table || (id && !rec)) return emptyState('❓', t('Not found'), '', h('a.btn', { href: '#/' }, t('Home')));
+  if (!canEdit(ctx, table)) return ownerOnlyPage();
   const back = id ? `#/t/${tableId}/${id}` : `#/t/${tableId}`;
+  // "Repeat": a new record that starts as a copy of an earlier one (same customer and items, fresh number and date)
+  const from = !id && ctx.query?.from ? store.getRecord(tableId, ctx.query.from) : null;
+  // "Full form" from the billing counter: carry on with the bill already scanned there
+  const draftKey = `pos-draft-${tableId}`;
+  let draft = null;
+  if (!id && ctx.query?.draft) { try { draft = JSON.parse(sessionStorage.getItem(draftKey) || 'null')?.data || null; } catch { draft = null; } }
   let form;
   const el = h('div.form-page',
-    pageHeader(id ? `${t('Edit')} ${recordTitle(table, rec)}` : `${t('New')}: ${table.name}`, h('a.btn.ghost', { href: back }, t('Back'))));
+    pageHeader({ title: id ? `${t('Edit')} ${recordTitle(table, rec)}` : `${t('New')}: ${table.newLabel || table.name}`, icon: iconFor(table.icon, { size: 20 }), crumb: { href: `#/t/${tableId}`, label: table.name } },
+      from ? pill(`↻ ${t('Copy of')} ${recordTitle(table, from)}`, 'info') : null,
+      h('a.btn.ghost', { href: back }, icon('back', { size: 16 }), t('Back'))));
   form = buildForm({
-    store, table, record: rec, initial: rec ? {} : defaultsFor(table, store),
+    store, table, record: rec, initial: rec ? {} : { ...defaultsFor(table, store), ...(from ? repeatData(table, from.data) : {}), ...(draft || {}) },
     onSaved: (saved, after) => {
+      if (draft) { try { sessionStorage.removeItem(draftKey); } catch { /* ignore */ } }
       location.hash = after === 'print' ? `#/t/${tableId}/${saved.id}/print?auto=1` : `#/t/${tableId}/${saved.id}?done=1`;
     },
     onCancel: () => { location.hash = back; },
@@ -184,6 +262,8 @@ export function recordView(ctx, tableId, id, query) {
     el.replaceChildren();
     const rec = store.getRecord(tableId, id);
     if (!table || !rec) { el.append(emptyState('🗑️', t('This record is not available'), '', h('a.btn', { href: `#/t/${tableId}` }, t('Back to list')))); return; }
+    if (!canSee(ctx, table)) { el.append(ownerOnlyPage()); return; }
+    const editable = canEdit(ctx, table);
     const d = rec.data;
     const scope = makeScope(table, d, store.ctx());
     const sf = table.statusField ? fieldOf(table, table.statusField) : null;
@@ -191,22 +271,24 @@ export function recordView(ctx, tableId, id, query) {
     const msgs = store.pendingFor(tableId, id);
     const qr = paymentQr(store, table, rec, 168);
 
-    el.append(pageHeader(`${table.icon || ''} ${recordTitle(table, rec)}`,
-      sf ? valueNode(store, sf, d[sf.id]) : null,
-      h('a.btn.ghost', { href: `#/t/${tableId}` }, t('Back')),
-      h('a.btn', { href: `#/t/${tableId}/${id}/edit` }, t('Edit')),
-      table.print ? h('a.btn', { href: `#/t/${tableId}/${id}/print` }, `🖨️ ${t('Print / share')}`) : null,
+    el.append(pageHeader({ title: recordTitle(table, rec), icon: iconFor(table.icon, { size: 20 }), crumb: { href: `#/t/${tableId}`, label: table.name }, after: sf ? valueNode(store, sf, d[sf.id]) : null },
+      h('a.btn.ghost', { href: `#/t/${tableId}` }, icon('back', { size: 16 }), t('Back')),
+      remindButton(store, tableId, id),
+      editable ? h('a.btn', { href: `#/t/${tableId}/${id}/edit` }, icon('pen', { size: 15 }), t('Edit')) : null,
+      editable ? h('a.btn', { href: `#/t/${tableId}/new?from=${id}`, title: t('Start a new one with the same details') }, icon('repeat', { size: 15 }), t('Repeat')) : null,
+      hooksFor(table)?.tools?.(store, table, rec, ctx) || null,
+      table.print ? h('a.btn', { href: `#/t/${tableId}/${id}/print` }, icon('printer', { size: 15 }), t('Print / share')) : null,
       ctx.role === 'owner' ? h('button.btn.danger', { onclick: async () => {
         if (!(await confirmDialog(t('Delete this record?'), { yes: t('Delete'), danger: true }))) return;
         await store.deleteRecord(tableId, id);
         location.hash = `#/t/${tableId}`;
         toast(t('Deleted.'), { action: { label: t('Undo'), fn: () => store.restoreRecord(tableId, id) }, ms: 9000 });
-      } }, t('Delete')) : null));
+      }, title: t('Delete'), 'aria-label': t('Delete') }, icon('trash', { size: 15 })) : null));
 
     if (rec.approval) {
       const a = rec.approval;
       el.append(h('div.banner', { class: a.status === 'pending' ? 'warn' : a.status === 'approved' ? 'ok' : 'error' },
-        h('b', a.status === 'pending' ? `🖊️ ${t('Waiting for approval')}` : a.status === 'approved' ? `✓ ${t('Approved')}` : `✕ ${t('Rejected')}`), ` — ${a.note || a.ruleName || ''}`,
+        h('b', a.status === 'pending' ? t('Waiting for approval') : a.status === 'approved' ? `✓ ${t('Approved')}` : `✕ ${t('Rejected')}`), ` — ${a.note || a.ruleName || ''}`,
         a.status === 'pending' && ctx.role === 'owner' ? h('span.banner-actions',
           h('button.btn.small.primary', { onclick: () => store.decideApproval(tableId, id, 'approved', ctx.userName) }, t('Approve')),
           h('button.btn.small', { onclick: () => store.decideApproval(tableId, id, 'rejected', ctx.userName) }, t('Reject'))) : null));
@@ -215,10 +297,10 @@ export function recordView(ctx, tableId, id, query) {
     // what to do next: collect money, send the message, print
     if (query.done || msgs.length || actions.length) {
       const nextBtns = h('div.next-actions',
-        table.print ? h('a.btn', { href: `#/t/${tableId}/${id}/print` }, `🖨️ ${t('Print / share')}`) : null,
-        h('a.btn', { href: `#/t/${tableId}/new` }, `＋ ${t('New')}`));
+        table.print ? h('a.btn', { href: `#/t/${tableId}/${id}/print` }, icon('printer', { size: 15 }), t('Print / share')) : null,
+        h('a.btn', { href: `#/t/${tableId}/new` }, icon('plus', { size: 15 }), t('New')));
       el.append(h('section.card.next',
-        query.done ? h('h3', `✓ ${t('Saved')}`) : h('h3', t('Next steps')),
+        query.done ? h('h3.saved', icon('check', { size: 18 }), t('Saved')) : h('h3', t('Next steps')),
         h('div.next-grid',
           h('div',
             actions.length ? h('div.next-actions', h('div.hint', t('Record what the customer gave you:')), actions.map((a) => h('button.btn', { onclick: async () => {
@@ -226,10 +308,12 @@ export function recordView(ctx, tableId, id, query) {
               if (r && r.blocked) toast(r.blocked, { kind: 'warn' });
             } }, a.label))) : null,
             msgs.length ? h('div.next-msgs', msgs.map((m) => sendCard(store, m, {}))) : null, nextBtns),
-          qr ? h('div.qr-card', h('div.qr', qr.svg), h('b', `${t('Scan to pay')} ${formatValue({ type: 'money' }, qr.amount)}`), h('div.muted', qr.vpa)) : null)));
+          qr ? h('div.qr-card', h('div.qr', qr.svg), h('b', `${t('Scan to pay')} ${formatValue({ type: 'money' }, qr.amount)}`), h('div.muted', qr.vpa),
+            qr.ref ? h('div.hint.good', t('Marked paid by itself when the bank confirms')) : null) : null)));
     }
 
-    const plain = table.fields.filter((f) => f.type !== 'lines');
+    const plain = table.fields.filter((f) => f.type !== 'lines' && !f.hidden && !(f.hideZero && !toNum(d[f.id]))
+      && !(f.showIf && !isTruthy(tryEvaluate(f.showIf, scope, true))));
     el.append(h('section.card', h('dl.details', plain.map((f) => h('div', h('dt', f.label), h('dd', valueNode(store, f, d[f.id], { rec })))))));
     for (const f of table.fields.filter((x) => x.type === 'lines')) {
       const cols = f.columns.filter((c) => !c.hidden);
@@ -264,8 +348,8 @@ export function printView(ctx, tableId, id, query) {
   };
   const el = h('div.print-page',
     h('div.toolbar.no-print',
-      h('a.btn.ghost', { href: `#/t/${tableId}/${id}` }, `← ${t('Back')}`),
-      h('button.btn.primary', { onclick: () => window.print() }, `🖨️ ${t('Print')}`), sel,
+      h('a.btn.ghost', { href: `#/t/${tableId}/${id}` }, icon('back', { size: 16 }), t('Back')),
+      h('button.btn.primary', { onclick: () => window.print() }, icon('printer', { size: 15 }), t('Print')), sel,
       h('span.hint', t('Tip: choose “Save as PDF” in the print window to share a PDF.'))),
     msgHost, docHost);
   paintDoc(); paintMsgs();

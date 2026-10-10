@@ -1,16 +1,22 @@
 // Settings: business profile, language, security, backup, sync.
 import { h, toast, confirmDialog, promptDialog, download, debounce } from '../ui/dom.js';
 import { t, setLang, LANGS, getLang } from '../i18n.js';
+import { icon } from '../ui/icons.js';
 import { pageHeader, labeled, pill } from '../ui/bits.js';
 import { qrSvg, upiLink } from '../print.js';
 import { cryptoAvailable, setPin, lockEnabled, encryptJson, decryptJson } from '../security.js';
 import { TEMPLATES } from '../templates/index.js';
+import { usesGst, gstSettingsCard } from '../../gst/js/ui.js';
+import { gstinProblem } from '../../gst/js/gst.js';
+import { collectSetup, collectStats, openBills } from '../collect.js';
+import { todayStr } from '../formula.js';
+import { fmtMoney } from '../schema.js';
 
 export const VERSION = '0.1.0';
 
 export function applyTheme(mode) {
-  const m = mode || localStorage.getItem('theme') || 'auto';
-  if (m === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', m);
+  const m = mode || localStorage.getItem('theme') || 'light';   // light by default: counters are brightly lit, dark screens glare
+  document.documentElement.setAttribute('data-theme', m);   // 'auto' follows the device; dark only when chosen
 }
 
 export function settingsView(ctx) {
@@ -22,6 +28,8 @@ export function settingsView(ctx) {
 
   // ---- business
   const qrHost = h('div.qr-preview');
+  const gst = usesGst(store);
+  const gstinMsg = h('span.hint.bad', b.gstin ? gstinProblem(b.gstin) : '');
   const paintQr = () => {
     qrHost.replaceChildren();
     if (b.upi?.trim()) qrHost.append(qrSvg(upiLink({ vpa: b.upi.trim(), name: b.name }), 110), h('div.hint', t('Scan with any UPI app to test. This QR is printed on your invoices.')));
@@ -31,13 +39,14 @@ export function settingsView(ctx) {
     labeled(t('Business name'), text(b, 'name')),
     h('div.two', labeled(t('Phone (for alerts to yourself)'), text(b, 'phone', { type: 'tel' })), labeled(t('Email'), text(b, 'email', { type: 'email' }))),
     labeled(t('Address'), text(b, 'address')),
-    h('div.two', labeled(t('GSTIN (optional)'), text(b, 'gstin')), labeled(t('UPI ID for QR code (e.g. shop@upi)'), text(b, 'upi', { after: debounce(paintQr, 300), placeholder: 'yourshop@okhdfcbank' }))), qrHost);
+    h('div.two', gst ? h('span') : labeled(t('GSTIN (optional)'), text(b, 'gstin', { after: () => { gstinMsg.textContent = b.gstin ? gstinProblem(b.gstin) : ''; } }), gstinMsg), labeled(t('UPI ID for QR code (e.g. shop@upi)'), text(b, 'upi', { after: debounce(paintQr, 300), placeholder: 'yourshop@okhdfcbank' }))), qrHost);
+  const gstCard = gst ? gstSettingsCard(store) : null;
 
   // ---- language & region
   const langSel = h('select', { 'aria-label': t('Language'), onchange: async (e) => { await setLang(e.target.value); s.lang = e.target.value; store.touchApp(); location.reload(); } },
     Object.entries(LANGS).map(([k, v]) => h('option', { value: k, selected: k === getLang() }, v)));
   const themeSel = h('select', { 'aria-label': t('Appearance'), onchange: (e) => { localStorage.setItem('theme', e.target.value); applyTheme(e.target.value); } },
-    [['auto', t('Automatic')], ['light', t('Light')], ['dark', t('Dark')]].map(([k, v]) => h('option', { value: k, selected: (localStorage.getItem('theme') || 'auto') === k }, v)));
+    [['auto', t('Automatic')], ['light', t('Light')], ['dark', t('Dark')]].map(([k, v]) => h('option', { value: k, selected: (localStorage.getItem('theme') || 'light') === k }, v)));
   const region = h('section.card', h('h3', t('Language & region')),
     h('div.two', labeled(t('Language'), langSel), labeled(t('Appearance'), themeSel)),
     h('p.hint', t('Changing the language translates the app. Names you already created (fields, tables) stay as you wrote them: rename them in the App builder.')),
@@ -80,13 +89,13 @@ export function settingsView(ctx) {
     h('p', t('Last backup:'), ' ', lastEl),
     h('p.hint', t('Your data lives on this device. A backup file is a full copy you can keep on a pen drive, email to yourself or upload to Google Drive. Back up at least once a week.')),
     h('div.row',
-      h('button.btn.primary', { onclick: () => { download(`shop-backup-${stamp()}.json`, JSON.stringify(store.exportAll())); markBackup(); } }, `⬇ ${t('Download backup')}`),
+      h('button.btn.primary', { onclick: () => { download(`shop-backup-${stamp()}.json`, JSON.stringify(store.exportAll())); markBackup(); } }, icon('download', { size: 15 }), t('Download backup')),
       secure ? h('button.btn', { onclick: async () => {
         const p = await promptDialog(t('Choose a passphrase. You will need it to restore. There is no way to recover it.'), '', { type: 'password' });
         if (!p) return;
         if (p.length < 6) { toast(t('Use at least 6 characters.'), { kind: 'warn' }); return; }
         download(`shop-backup-${stamp()}.enc.json`, JSON.stringify(await encryptJson(store.exportAll(), p))); markBackup();
-      } }, `🔒 ${t('Download encrypted backup')}`) : null),
+      } }, icon('lock', { size: 15 }), t('Download encrypted backup')) : null),
     h('div.restore', labeled(t('Restore from a backup file (replaces everything on this device)'), fileIn),
       h('button.btn', { onclick: async () => {
         const f = fileIn.files[0];
@@ -140,6 +149,9 @@ export function settingsView(ctx) {
       cfg ? h('button.btn', { onclick: async () => { const r = await sync.run(); toast(r.error ? `${t('Sync problem')}: ${r.error}` : `${t('Synced')}: ↑${r.pushed ?? 0} ↓${r.pulled ?? 0}`); } }, t('Sync now')) : null,
       cfg ? h('button.btn.ghost', { onclick: () => { sync.disconnect(); location.reload(); } }, t('Disconnect')) : null));
 
+  // ---- Smart Collect
+  const collectCard = collectSetup(store.app) ? smartCollectCard(store, sync, save) : null;
+
   // ---- data
   const usage = h('span.muted');
   navigator.storage?.estimate?.().then((e) => { if (e?.usage !== undefined) usage.textContent = `${(e.usage / 1048576).toFixed(1)} MB ${t('used')}`; });
@@ -155,5 +167,63 @@ export function settingsView(ctx) {
       } }, t('Erase everything'))),
     h('p.hint', `${t('Version')} ${VERSION}`));
 
-  return h('div.settings-page', pageHeader(t('Settings')), business, region, security, backup, syncCard, data);
+  return h('div.settings-page', pageHeader(t('Settings')), business, gstCard, collectCard, region, security, backup, syncCard, data);
+}
+
+/**
+ * Smart Collect: UPI payments confirmed by the bank mark bills paid by themselves. Needs a UPI id that belongs to a
+ * collections account (Decentro or another provider), and the sync server, which receives the provider's webhook.
+ */
+function smartCollectCard(store, sync, save) {
+  const s = store.settings;
+  const c = s.collect ||= { enabled: false, sandbox: true, provider: 'decentro' };
+  const status = h('div.collect-status');
+  const hookBox = h('div.collect-hook');
+  const stats = collectStats(store);
+  const needs = [];
+  if (!String(store.business.upi || '').trim()) needs.push(t('a UPI ID above (the one your payment provider gave you)'));
+  if (!store.meta.sync?.enabled) needs.push(t('sync turned on (below): the bank’s confirmation reaches your devices through it'));
+  const paint = () => {
+    status.replaceChildren(
+      c.enabled ? pill(t('on'), 'good') : pill(t('off'), 'muted'),
+      c.enabled ? h('span.muted', ` ${t('Last 30 days')}: ${t('{n} payments matched by themselves', { n: stats.auto })} (${fmtMoney(stats.autoAmount)})${stats.total ? ` · ${Math.round(stats.autoRate * 100)}% ${t('automatic')}` : ''}`) : null);
+  };
+  paint();
+  const toggle = h('input', { type: 'checkbox', checked: !!c.enabled, onchange: (e) => {
+    c.enabled = e.target.checked;
+    if (c.enabled && !c.since) c.since = todayStr();   // only UPI rows from today on are checked against the bank
+    save(); paint();
+  } });
+  const showHook = async (rotate = false) => {
+    try {
+      const r = await sync.collectSetup({ rotate });
+      const copy = (v) => h('button.btn.small', { onclick: async () => { try { await navigator.clipboard.writeText(v); toast(t('Copied.')); } catch { toast(v, { ms: 15000 }); } } }, t('Copy'));
+      hookBox.replaceChildren(
+        labeled(t('Webhook URL (paste into your provider’s dashboard)'), h('div.row', h('code.collect-code', r.hookUrl), copy(r.hookUrl))),
+        labeled(t('Signing secret (HMAC-SHA256 of the request body, sent in X-Signature)'), h('div.row', h('code.collect-code', r.secret), copy(r.secret))),
+        h('p.hint', t('The server must be reachable from the internet over https for the provider to call it (Caddy, nginx or a Cloudflare Tunnel in front of it). Keep the secret private; rotating it retires the old URL.')),
+        h('div.row', h('button.btn.small.ghost', { onclick: async () => { if (await confirmDialog(t('Make a new URL and secret? The old ones stop working.'), { danger: true, yes: t('Rotate') })) showHook(true); } }, t('Rotate secret')),
+          r.sandbox ? pill(t('sandbox payments allowed on this server'), 'info') : null));
+    } catch (e) { toast(e.message, { kind: 'warn', ms: 7000 }); }
+  };
+  const simulate = async () => {
+    const open = openBills(store).filter((b) => b.balance > 0.004).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const pick = open[0];
+    const amt = await promptDialog(pick ? t('Amount the customer pays (for bill {n})', { n: pick.number }) : t('Amount the customer pays'), pick ? String(pick.balance) : '100');
+    if (!amt) return;
+    try {
+      await sync.simulatePayment({ amount: Number(amt), ref: pick?.ref || '', name: t('Sandbox customer') });
+      toast(t('Sent. The bank’s confirmation arrives in a second or two.'));
+    } catch (e) { toast(e.message, { kind: 'warn', ms: 7000 }); }
+  };
+  return h('section.card.collect-card', h('h3', t('Smart Collect: UPI that marks bills paid')), status,
+    h('p.hint', t('Every bill’s QR carries its own reference. When the customer pays, your payment provider (for example Decentro) tells your sync server, and the bill is marked paid by itself with the bank’s UTR, on every device. No screenshots to check, no matching by hand. Billing still works offline; only the confirmation needs the internet.')),
+    needs.length ? h('div.banner.warn', h('span', `${t('Needs')}: ${needs.join('; ')}.`)) : null,
+    h('label.check', toggle, ` ${t('Turn on Smart Collect')}`),
+    h('label.check', h('input', { type: 'checkbox', checked: !!c.sandbox, onchange: (e) => { c.sandbox = e.target.checked; save(); } }), ` ${t('Sandbox: show “Simulate payment” buttons (for trying it out and demos)')}`),
+    h('div.row',
+      h('button.btn', { disabled: !store.meta.sync?.enabled, onclick: () => showHook() }, t('Show webhook URL & secret')),
+      c.sandbox ? h('button.btn', { disabled: !store.meta.sync?.enabled, onclick: simulate }, t('Simulate a payment')) : null,
+      h('a.btn.ghost', { href: '#/outbox/payments' }, t('Payments to check'))),
+    hookBox);
 }

@@ -271,12 +271,15 @@ export function findDuplicates(table, fieldId, data, records, selfId) {
  * Rank records for a typed query. An exact match on the first search field (the item code / barcode)
  * always ranks first, so typing a code and pressing Enter picks that exact item.
  */
-export function searchRecords(table, records, query, limit = 8) {
+export function searchRecords(table, records, query, limit = 8, rank = null) {
   const q = String(query || '').trim().toLowerCase();
   const fields = table.searchFields?.length ? table.searchFields : table.labelFields?.length ? table.labelFields : [table.titleField];
   const live = records.filter((r) => !r.deleted);
-  if (!q) return live.slice(0, limit);
+  if (!q) return rank ? [...live].sort((a, b) => (rank.get(b.id) || 0) - (rank.get(a.id) || 0)).slice(0, limit) : live.slice(0, limit);
   const words = q.split(/\s+/);
+  // "98765 43210", "9876543210" and "+91 98765-43210" are the same phone number
+  const qDigits = /^[\d\s+()-]+$/.test(q) ? q.replace(/\D/g, '') : '';
+  const isPhone = fields.map((id) => fieldOf(table, id)?.type === 'phone');
   const scored = [];
   for (const r of live) {
     const vals = fields.map((id) => String(r.data[id] ?? '').toLowerCase());
@@ -285,19 +288,110 @@ export function searchRecords(table, records, query, limit = 8) {
       const v = vals[i];
       if (!v) continue;
       const bonus = Math.max(0, 5 - i);
+      if (isPhone[i] && qDigits.length >= 3) {
+        const d = v.replace(/\D/g, '');
+        if (d.slice(-10) === qDigits.slice(-10) && qDigits.length >= 10) best = Math.max(best, 100 + bonus);
+        else if (d.startsWith(qDigits) || d.slice(-10).startsWith(qDigits)) best = Math.max(best, 60 + bonus);
+        else if (d.includes(qDigits)) best = Math.max(best, 20 + bonus);
+        continue;
+      }
       if (v === q) best = Math.max(best, 100 + bonus);
       else if (v.startsWith(q)) best = Math.max(best, 60 + bonus);
       else if (v.split(/[\s\-_/.]+/).some((w) => w.startsWith(q))) best = Math.max(best, 40 + bonus);
       else if (v.includes(q)) best = Math.max(best, 20 + bonus);
     }
+    // among equally good matches, the ones this shop uses most come first
+    if (best && rank) best += Math.min(9, rank.get(r.id) || 0) / 10;
     if (!best && words.length > 1) {
       const hay = vals.join(' ');
       if (words.every((w) => hay.includes(w))) best = 15;
     }
     if (best) scored.push([best, r]);
   }
+  // nothing matched as typed: allow a slip of the finger ("suagr", "biscut"). A second pass, so it costs nothing on
+  // normal searches and a near match can never push out a real one.
+  if (!scored.length && !qDigits && q.length >= 4) {
+    for (const r of live) {
+      const hayWords = fields.map((id) => String(r.data[id] ?? '').toLowerCase()).join(' ').split(/[\s\-_/.,]+/).filter((w) => w.length >= 3);
+      if (words.every((w) => w.length < 4 || hayWords.some((hw) => nearWord(w, hw)))) scored.push([8 + (rank ? Math.min(9, rank.get(r.id) || 0) / 10 : 0), r]);
+    }
+  }
   scored.sort((a, b) => b[0] - a[0] || recordLabel(table, a[1]).localeCompare(recordLabel(table, b[1])));
   return scored.slice(0, limit).map((x) => x[1]);
 }
 
+/** Edits to turn a into b, counting a swap of two neighbouring letters ("suagr") as one. */
+function editDistance(a, b, max) {
+  let pp = [], prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) cur[j] = Math.min(cur[j], pp[j - 2] + 1);
+      rowMin = Math.min(rowMin, cur[j]);
+    }
+    if (rowMin > max) return max + 1;
+    pp = prev; prev = cur;
+  }
+  return prev[b.length];
+}
+/** True when `typed` is a typo or two away from `word` or from its start: 1 edit up to 6 letters, 2 beyond. */
+export function nearWord(typed, word) {
+  const max = typed.length <= 6 ? 1 : 2;
+  for (const len of [typed.length, typed.length - 1, typed.length + 1]) {
+    if (len < 3 || len > word.length) continue;
+    if (editDistance(typed, word.slice(0, len), max) <= max) return true;
+  }
+  return false;
+}
+
 export function linesFieldsOf(table) { return table.fields.filter((f) => f.type === 'lines'); }
+
+// ---- less typing ----------------------------------------------------------------------------------
+const PHONE_RUN = /(\+?\d[\d\s-]{5,}\d)/;
+/**
+ * What the user typed into a picker, split into fields for a new record:
+ *   "Ravi Kumar 98765 43210" -> { name: 'Ravi Kumar', phone: '98765 43210' }      "98765 43210" -> { phone: ... }
+ */
+export function parseQuickCreate(table, query) {
+  const q = String(query || '').trim().replace(/\s+/g, ' ');
+  const out = {};
+  if (!q) return out;
+  const phoneField = table.fields.find((f) => f.type === 'phone');
+  const m = phoneField ? PHONE_RUN.exec(q) : null;
+  let rest = q;
+  if (m && m[1].replace(/\D/g, '').length >= 7) {
+    out[phoneField.id] = m[1].trim();
+    rest = (q.slice(0, m.index) + ' ' + q.slice(m.index + m[1].length)).replace(/[\s,·-]+/g, ' ').trim();
+  }
+  if (rest) out[table.titleField] = rest;
+  return out;
+}
+
+/** A short unique code made from a name: "Sunflower Oil 1L" -> "SUN1", then "SUN2" if that is taken. */
+export function suggestCode(name, taken) {
+  const words = String(name || '').toUpperCase().normalize('NFKD').replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  const letters = words.find((w) => /[A-Z]/.test(w)) || words[0];
+  const stem = (letters.replace(/[^A-Z]/g, '') + (words[1] || '').replace(/[^A-Z]/g, '')).slice(0, 3) || letters.slice(0, 3);
+  const digit = /\d+/.exec(words.join(' '))?.[0] || '1';
+  const has = (c) => (taken instanceof Set ? taken.has(c) : taken.includes(c));
+  let n = Number(digit.slice(0, 3)), code = `${stem}${n}`;
+  while (has(code)) code = `${stem}${++n}`;
+  return code;
+}
+
+/** Data for "Repeat": the same customer and lines, but a fresh number, today's dates and no payments. */
+export function repeatData(table, data) {
+  const out = {};
+  for (const f of table.fields) {
+    if (isComputed(f) || f.type === 'date' || f.noRepeat) continue;
+    if (f.type === 'lines') {
+      if (!f.quickEntry) continue;
+      const keep = (f.columns || []).filter((c) => !isComputed(c));
+      out[f.id] = (data[f.id] || []).filter((r) => !rowIsBlank(f, r)).map((r) => Object.fromEntries(keep.map((c) => [c.id, r[c.id]])));
+    } else if (!isBlank(data[f.id])) out[f.id] = data[f.id];
+  }
+  return out;
+}

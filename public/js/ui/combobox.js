@@ -5,6 +5,8 @@
 //   Enter       -> picks the highlighted match. No mouse needed.
 //   Tab         -> also picks it (if you typed something) and moves on
 //   ↑ / ↓       -> change the highlighted match      Esc -> close, keep the previous value
+//   focus (empty, with `suggestOnFocus`) -> the most-used choices are listed with nothing highlighted, so a tap picks one
+//                  and Enter still moves on as before
 import { h } from './dom.js';
 import { t } from '../i18n.js';
 
@@ -54,6 +56,7 @@ export function combobox(opts) {
       window.addEventListener('resize', position);
     }
     list.replaceChildren();
+    if (!typed && opts.suggestTitle && items.length) list.append(h('li.cb-head', { role: 'presentation' }, opts.suggestTitle));
     items.forEach((o, i) => {
       list.append(h('li.cb-opt', {
         id: `${uid}-o${i}`, role: 'option', 'aria-selected': String(i === active), class: i === active ? 'active' : '',
@@ -76,11 +79,11 @@ export function combobox(opts) {
     });
     if (active >= 0) input.setAttribute('aria-activedescendant', `${uid}-o${active}`); else input.removeAttribute('aria-activedescendant');
   }
-  function show() {
+  function show(passive = false) {
     open = true;
     input.setAttribute('aria-expanded', 'true');
     items = opts.getOptions(typed ? input.value : '');
-    active = items.length ? 0 : -1;
+    active = items.length && !passive ? 0 : -1;
     render(); paint();
   }
   function hide() {
@@ -102,7 +105,10 @@ export function combobox(opts) {
   }
   function create(q) { hide(); opts.onCreate(q, (id) => api.set(id)); }
 
-  input.addEventListener('focus', () => { input.select(); });
+  input.addEventListener('focus', () => {
+    input.select();
+    if (opts.suggestOnFocus && (!value || opts.clearOnPick) && !input.value) { typed = false; show(true); if (!items.length) hide(); }
+  });
   input.addEventListener('input', () => { typed = true; show(); });
   input.addEventListener('keydown', (e) => {
     if (e.isComposing) return;
@@ -110,7 +116,7 @@ export function combobox(opts) {
       e.preventDefault();
       if (!open) { typed = false; show(); return; }
       if (!items.length) return;
-      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      active = active < 0 ? (e.key === 'ArrowDown' ? 0 : items.length - 1) : (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
       paint();
     } else if (e.key === 'Enter') {
       if (open && items.length && active >= 0) {

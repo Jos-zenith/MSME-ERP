@@ -11,7 +11,7 @@ const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e
   : e.name.endsWith('.js') ? [path.join(d, e.name)] : []));
 
 // owner-side screens (builder, settings, import) - translated after the everyday screens
-const OWNER_SIDE = new Set(['build.js', 'workflows.js', 'dashbuild.js', 'conditions.js', 'settings.js', 'importer.js']);
+const OWNER_SIDE = new Set(['build.js', 'workflows.js', 'dashbuild.js', 'conditions.js', 'settings.js', 'importer.js', 'passport.js']);
 
 export function extractKeys({ everydayOnly = false } = {}) {
   const keys = new Set();

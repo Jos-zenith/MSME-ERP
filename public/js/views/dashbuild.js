@@ -1,6 +1,7 @@
 // Dashboard builder: pick a table, a measure and a chart; see it update live.
 import { h, toast, confirmDialog, promptDialog, debounce } from '../ui/dom.js';
 import { t } from '../i18n.js';
+import { icon } from '../ui/icons.js';
 import { pageHeader, emptyState, labeled, pill } from '../ui/bits.js';
 import { conditionsEditor } from '../ui/conditions.js';
 import { widgetCard } from './reports.js';
@@ -130,7 +131,7 @@ export function dashEditor(ctx, id) {
   function paint() { paintList(); paintPanel(); paintPreview(); }
   paint();
   return h('div.designer',
-    pageHeader(board.name, h('a.btn.ghost', { href: '#/build/dashboards' }, `← ${t('All dashboards')}`), h('a.btn', { href: `#/reports/${board.id}` }, t('View'))),
+    pageHeader(board.name, h('a.btn.ghost', { href: '#/build/dashboards' }, icon('back', { size: 16 }), t('All dashboards')), h('a.btn', { href: `#/reports/${board.id}` }, t('View'))),
     h('div.row', labeled(t('Dashboard name'), h('input', { value: board.name, oninput: (e) => { board.name = e.target.value; save(); } })),
       h('label.check', h('input', { type: 'checkbox', checked: !!board.ownerOnly, onchange: (e) => { board.ownerOnly = e.target.checked; save(); } }), ` ${t('Only the owner can see this')}`)),
     h('div.layout-2', h('div.design', h('h3', t('Widgets')), listEl, preview), panel));

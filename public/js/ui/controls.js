@@ -15,14 +15,27 @@ export function subText(store, table, rec) {
     const v = rec.data[id];
     if (!f || isBlank(v)) return '';
     const s = formatValue(f, v, ctx);
-    return f.type === 'number' ? `${f.label}: ${s}` : s;
+    return f.type === 'number' || f.type === 'select' ? `${f.label}: ${s}` : s;
   }).filter(Boolean).join(' · ');
 }
 
 export function lookupOptions(store, refTable, query, limit = 8) {
-  return searchRecords(refTable, store.records(refTable.id), query, limit).map((r) => ({
+  const rank = store.usage?.(refTable.id);
+  return searchRecords(refTable, store.records(refTable.id), query, limit, rank).map((r) => ({
     id: r.id, label: recordLabel(refTable, r), sub: subText(store, refTable, r),
   }));
+}
+
+let dlN = 0;
+/** Suggestions for a plain text field from what was typed before (city, supplier...). Built on first focus. */
+function rememberValues(inp, store, tableId, fieldId) {
+  inp.addEventListener('focus', () => {
+    const vals = store.pastValues(tableId, fieldId);
+    if (!vals.length) return;
+    let dl = inp.list;
+    if (!dl) { dl = h('datalist', { id: `dl${++dlN}` }); inp.after(dl); inp.setAttribute('list', dl.id); }
+    dl.replaceChildren(...vals.map((v) => h('option', { value: v })));
+  });
 }
 
 function parseNum(s) {
@@ -35,7 +48,7 @@ const plain = (v) => (v === null || v === undefined || v === '' ? '' : String(v)
  * def: field or column definition. get()/set(v) read and write the draft value.
  * returns { el, sync(), focusEl, isCombo }
  */
-export function makeControl(store, def, { get, set, onPick, onCreate, aria, compact = false }) {
+export function makeControl(store, def, { get, set, onPick, onCreate, aria, compact = false, tableId, placeholder }) {
   const ctx = store.ctx();
   const label = aria || def.label;
 
@@ -44,7 +57,7 @@ export function makeControl(store, def, { get, set, onPick, onCreate, aria, comp
     const out = h('output.out', { class: def.big ? 'big' : '', 'aria-label': label });
     const fmt = () => {
       const v = get();
-      if (def.auto && isBlank(v)) return t('(automatic)');
+      if ((def.auto || def.numbered) && isBlank(v)) return t('(automatic)');
       const s = formatValue(def, v, ctx);
       return s === '' ? '—' : s;
     };
@@ -63,7 +76,8 @@ export function makeControl(store, def, { get, set, onPick, onCreate, aria, comp
     case 'lookup': {
       const refTable = store.table(def.ref);
       const cb = combobox({
-        value: get(), placeholder: compact ? '' : t('Type to search…'), ariaLabel: label, className: 'cb-fill',
+        value: get(), placeholder: compact ? '' : placeholder?.() || t('Type to search…'), ariaLabel: label, className: 'cb-fill',
+        suggestOnFocus: true, suggestTitle: t('Used most'),
         getOptions: (q) => (refTable ? lookupOptions(store, refTable, q) : []),
         labelOf: (id) => { const r = ctx.getRecord(def.ref, id); return r && refTable ? recordLabel(refTable, r) : ''; },
         onChange: (id) => set(id),
@@ -108,7 +122,14 @@ export function makeControl(store, def, { get, set, onPick, onCreate, aria, comp
         inputmode: def.type === 'phone' ? 'tel' : undefined, autocomplete: 'off', 'aria-label': label,
       });
       inp.addEventListener('input', () => set(inp.value));
-      return { el: inp, focusEl: inp, sync() { if (!active(inp) && inp.value !== plain(get())) inp.value = plain(get()); } };
+      if (def.type === 'text' && def.remember !== false && !def.unique && !def.autoCode && tableId && store.pastValues) rememberValues(inp, store, tableId, def.id);
+      return {
+        el: inp, focusEl: inp,
+        sync() {
+          if (!active(inp) && inp.value !== plain(get())) inp.value = plain(get());
+          if (placeholder) inp.placeholder = placeholder() || '';
+        },
+      };
     }
   }
 }

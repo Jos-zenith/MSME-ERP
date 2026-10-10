@@ -6,14 +6,17 @@ import { chartWithTable, fmtByType } from '../ui/charts.js';
 import { pageHeader, emptyState, tabs } from '../ui/bits.js';
 import { fieldOf, recordTitle } from '../schema.js';
 import { valueNode } from './data.js';
+import { icon } from '../ui/icons.js';
 
 export function widgetCard(store, w, { compact = false } = {}) {
   const data = widgetData(w, store);
   if (data.error) return h('section.card.widget.err', h('h3', w.title), h('p.muted', t('This widget points to a table that no longer exists.')));
   const span = w.span === 2 && !compact ? ' span-2' : '';
   if (data.kind === 'kpi') {
+    const sub = data.parts?.length ? data.parts.map((p) => `${p.label} ${fmtByType(data.fmt, p.value)}`).join(' · ')
+      : w.sub ? String(w.sub).replace(/\{n\}/g, data.count) : '';
     return h('section.card.kpi', { class: span.trim(), 'aria-label': w.title },
-      h('div.kpi-label', w.title), h('div.kpi-value', fmtByType(data.fmt, data.value)));
+      h('div.kpi-label', w.title), h('div.kpi-value', fmtByType(data.fmt, data.value)), sub ? h('div.kpi-sub', sub) : null);
   }
   if (data.kind === 'series') {
     return h('section.card.widget', { class: span.trim() }, h('h3', w.title),
@@ -37,11 +40,16 @@ export function dashboardsView(ctx, id) {
   }
   const board = boards.find((b) => b.id === id) || boards[0];
   const grid = h('div.widgets');
-  const paint = () => { grid.replaceChildren(...board.widgets.map((w) => widgetCard(store, w))); };
+  // the numbers in one strip across the top, then the charts and lists
+  const paint = () => {
+    const kpis = board.widgets.filter((w) => w.type === 'kpi');
+    grid.replaceChildren(kpis.length ? h('section.kpi-strip.span-2', kpis.map((w) => widgetCard(store, w, { compact: true }))) : null,
+      board.widgets.filter((w) => w.type !== 'kpi').map((w) => widgetCard(store, w)));
+  };
   paint();
   ctx.watch(debounce(paint, 80));
   return h('div.reports',
-    pageHeader(board.name, ctx.role === 'owner' ? h('a.btn', { href: `#/build/d/${board.id}` }, `✎ ${t('Edit dashboard')}`) : null),
+    pageHeader(board.name, ctx.role === 'owner' ? h('a.btn', { href: `#/build/d/${board.id}` }, icon('pen', { size: 15 }), t('Edit dashboard')) : null),
     boards.length > 1 ? tabs(boards.map((b) => ({ id: b.id, label: b.name })), board.id, (bid) => { location.hash = `#/reports/${bid}`; }) : null,
     grid);
 }

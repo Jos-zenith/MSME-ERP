@@ -1,6 +1,7 @@
 // Workflow builder: "when this happens, if this is true, then do this" - no code.
 import { h, toast, confirmDialog, debounce } from '../ui/dom.js';
 import { t } from '../i18n.js';
+import { icon } from '../ui/icons.js';
 import { pageHeader, emptyState, labeled, CHANNEL_ICON, channelName } from '../ui/bits.js';
 import { conditionsEditor, fieldChoices, opLabel } from '../ui/conditions.js';
 import { renderTemplate } from '../logic.js';
@@ -228,7 +229,7 @@ export function ruleEditor(ctx, ruleId) {
     if (fSel && !rule.field) rule.field = fSel.value;
 
     root.append(
-      pageHeader(t('Workflow'), h('a.btn.ghost', { href: '#/build/rules' }, `← ${t('All workflows')}`)),
+      pageHeader(t('Workflow'), h('a.btn.ghost', { href: '#/build/rules' }, icon('back', { size: 16 }), t('All workflows'))),
       labeled(t('Name'), h('input', { value: rule.name, oninput: (e) => { rule.name = e.target.value; save(); } })), summary,
       h('section.card.step-card', h('h3', `1 · ${t('When')}`), h('div.two', labeled(t('Table'), tSel), labeled(t('this happens'), trSel)), fSel ? labeled(t('Which field'), fSel) : null,
         rule.trigger === 'schedule' ? h('p.hint', t('Runs whenever the app is opened (and about once an hour while it stays open). Each record is only acted on once per interval below.')) : null,

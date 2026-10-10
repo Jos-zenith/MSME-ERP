@@ -3,9 +3,10 @@ import { h, toast } from '../ui/dom.js';
 import { t, setLang, LANGS, getLang } from '../i18n.js';
 import { labeled } from '../ui/bits.js';
 import { TEMPLATES, buildTemplate } from '../templates/index.js';
+import { validateGstin, gstinProblem, stateLabel } from '../../gst/js/gst.js';
 
 export function onboardingView({ store, sync, onDone }) {
-  const state = { step: 0, name: '', phone: '', upi: '', tpl: 'retail', sample: true };
+  const state = { step: 0, name: '', phone: '', upi: '', gstin: '', tpl: 'retail', sample: true };
   const root = h('div.onboard');
   const card = h('div.onboard-card');
   root.append(card);
@@ -13,7 +14,8 @@ export function onboardingView({ store, sync, onDone }) {
   const dots = () => h('div.steps', [0, 1, 2].map((i) => h('span', { class: i === state.step ? 'dot on' : 'dot' })));
 
   async function finish() {
-    const app = buildTemplate(state.tpl, t, { businessName: state.name.trim() || undefined, phone: state.phone.trim(), upi: state.upi.trim(), lang: getLang() });
+    const g = validateGstin(state.gstin);
+    const app = buildTemplate(state.tpl, t, { businessName: state.name.trim() || undefined, phone: state.phone.trim(), upi: state.upi.trim(), lang: getLang(), gstin: g.ok ? g.gstin : '' });
     store.setApp(app);
     const tpl = TEMPLATES.find((x) => x.id === state.tpl);
     if (state.sample && tpl.sample) { await tpl.sample(store, t); store.meta.tips = true; store._persistMeta('tips'); }
@@ -40,12 +42,31 @@ export function onboardingView({ store, sync, onDone }) {
       name.focus();
     } else if (state.step === 2) {
       const sample = h('input', { type: 'checkbox', checked: state.sample, onchange: (e) => { state.sample = e.target.checked; } });
+      const tpl = TEMPLATES.find((x) => x.id === state.tpl);
+      const start = h('button.btn.primary', { onclick: async (e) => { e.target.disabled = true; await finish(); } }, t('Start'));
+      // GST billing needs the shop's own GSTIN: it tells us the state, so CGST + SGST vs IGST is never guessed
+      let gstBox = null;
+      if (tpl?.needsGstin) {
+        const read = h('div.hint', { role: 'status' });
+        const check = () => {
+          const g = validateGstin(state.gstin);
+          start.disabled = !g.ok;
+          read.className = g.ok ? 'hint good' : 'hint';
+          read.textContent = g.ok ? `✓ ${stateLabel(g.stateCode).replace(/^\d+ - /, '')} · PAN ${g.pan}`
+            : state.gstin.trim().length >= 15 ? gstinProblem(state.gstin) : t('15 characters, e.g. 27AAPFU0939F1ZV. Your state is read from it.');
+        };
+        const inp = h('input.gstin-input', { value: state.gstin, maxlength: 18, autocapitalize: 'characters', spellcheck: 'false', 'aria-label': t('Your GSTIN'), placeholder: '27AAPFU0939F1ZV',
+          oninput: (e) => { state.gstin = e.target.value; check(); } });
+        gstBox = h('div.gst-box', labeled(t('Your GSTIN'), inp), read);
+        check();
+        queueMicrotask(() => inp.focus());
+      }
       card.append(dots(), h('h1', t('What do you want to manage?')),
-        h('div.tpl-grid', TEMPLATES.map((x) => h('button.card.tile', { class: state.tpl === x.id ? 'sel' : '', onclick: () => { state.tpl = x.id; paint(); } },
+        h('div.tpl-grid', TEMPLATES.map((x) => h('button.card.tile', { class: state.tpl === x.id ? 'sel' : '', dataset: { tpl: x.id }, onclick: () => { state.tpl = x.id; paint(); } },
           h('div.tile-ic', x.icon), h('h3', t(x.title)), h('p.muted', t(x.desc))))),
+        gstBox,
         h('label.check', sample, ` ${t('Add example data so I can try it out')}`),
-        h('div.row', h('button.btn.ghost', { onclick: () => { state.step = 1; paint(); } }, t('Back')),
-          h('button.btn.primary', { onclick: async (e) => { e.target.disabled = true; await finish(); } }, t('Start'))));
+        h('div.row', h('button.btn.ghost', { onclick: () => { state.step = 1; paint(); } }, t('Back')), start));
     } else {
       const url = h('input', { value: location.protocol.startsWith('http') ? location.origin : '', placeholder: 'https://…' });
       const ws = h('input', { placeholder: t('Workspace name') });

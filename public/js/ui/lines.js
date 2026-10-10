@@ -10,6 +10,8 @@
 import { h, toast } from './dom.js';
 import { makeControl, lookupOptions } from './controls.js';
 import { combobox } from './combobox.js';
+import { cameraScanSupported, openScanner } from './scanner.js';
+import { icon } from './icons.js';
 import { t } from '../i18n.js';
 import { newRow, rowIsBlank, makeScope, isBlank, fmtMoney, isComputed } from '../schema.js';
 import { tryEvaluate, toNum } from '../formula.js';
@@ -56,7 +58,7 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
           onPick: () => { const idx = flow.indexOf(col.id); focusCell(i, flow[idx + 1] || flow[idx]); },
         });
         rowCells[col.id] = ctl;
-        tr.append(h('td', { class: `c-${col.type}`, dataset: { c: col.id } }, ctl.el));
+        tr.append(h('td', { class: `c-${col.type}${isComputed(col) ? ' c-calc' : ''}`, dataset: { c: col.id, label: col.label } }, ctl.el));
       }
       tr.append(h('td.rm', h('button.icon-btn', { type: 'button', tabindex: '-1', 'aria-label': t('Delete row'), onclick: () => deleteRow(i) }, '✕')));
       tbody.append(tr);
@@ -68,6 +70,7 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
   function sync() {
     if (getRows().length !== cells.length) { renderRows(); return; }
     for (const row of cells) for (const c of Object.values(row)) c.sync();
+    paintUsual();
   }
 
   function addRow(at) {
@@ -121,6 +124,7 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
   // ---- quick-entry bar (scan / type code, Enter) --------------------------------------------------
   const itemCol = cols.find((c) => c.type === 'lookup');
   let quick = null, qty = 1;
+  const canAddItems = !!itemCol && (store.canAddTo ? store.canAddTo(itemCol.ref) : true);
   if (field.quickEntry && itemCol) {
     const refTable = store.table(itemCol.ref);
     quick = combobox({
@@ -133,8 +137,35 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
       },
       labelOf: () => '',
       onPick: (o) => addItem(o.id, qty),
+      // a code that is not in the items yet (a new product scanned for the first time): add it without retyping the code
+      onCreate: canAddItems ? (q) => addNewItem(QTY_RE.exec(q)?.[1] || q, qty) : null,
+      createLabel: (q) => t('New item with code {q}', { q: QTY_RE.exec(q)?.[1] || q }),
     });
   }
+  /** Opens the new-item form with the scanned / typed code already filled in, then puts the item on the bill. */
+  async function addNewItem(code, n = 1) {
+    const refTable = store.table(itemCol.ref);
+    const isBarcode = /^\d{8,14}$/.test(code) && refTable.fields.some((f) => f.id === 'barcode');
+    const codeField = isBarcode ? 'barcode' : refTable.fields.find((f) => f.id === 'code') ? 'code' : refTable.titleField;
+    const { openRecordModal } = await import('./form.js');
+    openRecordModal(store, refTable.id, { [codeField]: code }, (rec) => { addItem(rec.id, n); quick?.focus(); });
+  }
+  /** Exact code / barcode match only: a camera misread must never add the wrong item. */
+  function itemByCode(code) {
+    const refTable = store.table(itemCol.ref);
+    const ids = refTable.searchFields?.length ? refTable.searchFields : [refTable.titleField];
+    const c = code.toLowerCase();
+    return store.records(refTable.id).find((r) => ids.some((id) => String(r.data[id] ?? '').trim().toLowerCase() === c)) || null;
+  }
+  const scanBtn = quick && cameraScanSupported() ? h('button.btn.small.scan-btn', { type: 'button', 'aria-label': t('Scan with camera'), title: t('Scan with camera'), onclick: () => openScanner({
+    title: t('Scan with camera'),
+    onCode: (code) => {
+      const rec = itemByCode(code);
+      if (!rec) return { unknown: true, add: canAddItems ? () => addNewItem(code) : null };
+      addItem(rec.id, 1);
+      return { label: String(rec.data[store.table(itemCol.ref).titleField] ?? code) };
+    },
+  }) }, icon('camera', { size: 18 })) : null;
   function addItem(itemId, n) {
     const rows = getRows();
     const qtyCol = cols.find((c) => c.id === (field.qtyColumn || 'qty'));
@@ -153,6 +184,38 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
     tr?.classList.add('flash');
     tr?.scrollIntoView({ block: 'nearest' });
     setTimeout(() => tr?.classList.remove('flash'), 900);
+  }
+
+  // ---- "usually buys" strip: one tap adds what this customer (or the shop) buys most --------------------
+  const partyField = table.fields.find((f) => f.type === 'lookup');
+  const usual = quick ? h('div.usual', { hidden: true }) : null;
+  let usualKey = null;
+  function paintUsual() {
+    if (!usual || !store.usualLines) return;
+    const data = getData();
+    const partyId = partyField ? data[partyField.id] || '' : '';
+    const inBill = new Set(getRows().map((r) => r[itemCol.id]).filter(Boolean));
+    const key = `${partyId}|${[...inBill].join(',')}|${store.count(table.id)}`;
+    if (key === usualKey) return;
+    usualKey = key;
+    const u = store.usualLines(table, field, partyField, partyId);
+    const itemTable = store.table(itemCol.ref);
+    const party = partyId && partyField ? store.getRecord(partyField.ref, partyId) : null;
+    const partyTable = partyField ? store.table(partyField.ref) : null;
+    const name = (id) => { const r = store.getRecord(itemCol.ref, id); return r ? String(r.data[itemTable.titleField] ?? '') : ''; };
+    const qtyOf = (x) => toNum(x.qty) || 1;
+    const chips = u.items.filter((x) => !inBill.has(x.id)).map((x) => h('button.chip.usual-chip', { type: 'button', onclick: () => addItem(x.id, qtyOf(x)) },
+      `＋ ${name(x.id)}`, qtyOf(x) !== 1 ? h('span.count', `×${qtyOf(x)}`) : null));
+    const last = u.last;
+    const lastRows = last ? (last.data[field.id] || []).filter((r) => r[itemCol.id] && store.getRecord(itemCol.ref, r[itemCol.id])) : [];
+    const repeat = lastRows.length && !inBill.size ? h('button.chip.repeat-chip', { type: 'button', onclick: () => {
+      for (const r of lastRows) addItem(r[itemCol.id], toNum(r[field.qtyColumn || 'qty']) || 1);
+      toast(t('Added {n} items from the last bill.', { n: lastRows.length }));
+    } }, `↻ ${t('Repeat last bill')}`, h('span.count', `${lastRows.length} · ${last.data[table.titleField] || ''}`)) : null;
+    usual.hidden = !chips.length && !repeat;
+    usual.replaceChildren(
+      h('span.usual-lbl', party && partyTable ? t('{name} usually buys', { name: String(party.data[partyTable.titleField] ?? '') }) : t('Popular')),
+      repeat, chips);
   }
 
   // ---- presets ("Cash received" etc.) ----------------------------------------------------------------
@@ -175,11 +238,11 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
   }, p.label));
 
   const foot = h('div.lines-foot',
-    h('button.btn.small', { type: 'button', onclick: () => addRow() }, `＋ ${t('Add row')}`),
+    h('button.btn.small', { type: 'button', onclick: () => addRow() }, icon('plus', { size: 14 }), t('Add row')),
     presets,
     h('span.hint.kbd-hint', t('Enter ↵ next · Alt+N new row · Alt+D delete row')));
 
-  const el = h('div.lines', quick ? h('div.quick', h('span.quick-ic', '⌁'), quick.el) : null, wrap, foot);
+  const el = h('div.lines', quick ? h('div.quick', h('span.quick-ic', icon('scan', { size: 16 })), quick.el, scanBtn) : null, usual, wrap, foot);
   if (!getRows().length) getRows().push(newRow(field, ctx));
   renderRows();
   return {

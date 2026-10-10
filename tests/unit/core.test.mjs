@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluate, check, round } from '../../public/js/formula.js';
+import { evaluate, check, round, todayStr, addDays } from '../../public/js/formula.js';
 import { Store } from '../../public/js/store.js';
 import { memoryDb } from '../../public/js/db.js';
 import { buildTemplate, TEMPLATES } from '../../public/js/templates/index.js';
+import { upgradeCounter } from '../../public/js/templates/common.js';
 import { renderTemplate } from '../../public/js/logic.js';
 import { searchRecords, recordLabel } from '../../public/js/schema.js';
 import { widgetData } from '../../public/js/analytics.js';
@@ -240,8 +241,11 @@ test('dashboard widgets: KPI, time series with zero days, grouped by line item',
   await store.saveRecord('invoices', { items: [{ item: sugar.id, qty: 2 }, { item: soap.id, qty: 1 }], payments: [{ mode: 'Cash', amount: 100 }] });
   const dash = store.app.dashboards[0];
   const w = (id) => dash.widgets.find((x) => x.id === id);
-  assert.equal(widgetData(w('w1'), store).value, 218, 'sales today');
-  assert.equal(widgetData(w('w2'), store).value, 1);
+  const billed = widgetData(w('w1b'), store);
+  assert.deepEqual([billed.value, billed.count], [218, 1], 'billed today: the whole bill, credit part included');
+  const got = widgetData(w('w1'), store);
+  assert.equal(got.value, 100, 'collected today: only the money received');
+  assert.deepEqual(got.parts, [{ label: 'Cash', value: 100 }]);
   assert.equal(widgetData(w('w3'), store).value, 118, 'payments pending');
   const week = widgetData(w('w5'), store);
   assert.equal(week.series.length, 7);
@@ -251,6 +255,50 @@ test('dashboard widgets: KPI, time series with zero days, grouped by line item',
   const modes = widgetData(w('w7'), store);
   assert.deepEqual(modes.series.map((s) => [s.label, s.value]), [['Cash', 100]]);
   assert.equal(widgetData(w('w4'), store).value, 1, 'soap is at its reorder level (5 of 5)');
+});
+
+test('galla closing: "Collected today" is the money received today by mode, old dues included; credit given today is not', async () => {
+  const { store, sugar, soap } = await shop();
+  const today = todayStr();
+  const old = (await store.saveRecord('invoices', { date: addDays(today, -3), items: [{ item: soap.id, qty: 1 }] })).record;     // 118 on credit, 3 days ago
+  await store.patchRecord('invoices', old.id, { payments: [{ pdate: today, mode: 'UPI', amount: 118 }] });                       // ...paid today
+  await store.saveRecord('invoices', { items: [{ item: sugar.id, qty: 2 }], payments: [{ pdate: today, mode: 'Cash', amount: 50 }] }); // 100 today, 50 on credit
+  await store.saveRecord('invoices', { date: addDays(today, -1), items: [{ item: sugar.id, qty: 1 }], payments: [{ pdate: '', mode: 'Cash', amount: 50 }] }); // imported with a blank date: counts on the bill's date
+  const w = (id) => store.app.dashboards[0].widgets.find((x) => x.id === id);
+  const got = widgetData(w('w1'), store);
+  assert.equal(got.value, 168);
+  assert.deepEqual(got.parts, [{ label: 'UPI', value: 118 }, { label: 'Cash', value: 50 }]);
+  assert.equal(widgetData(w('w1b'), store).value, 100, 'billed today ignores the old bill paid today');
+  assert.equal(widgetData(w('w3'), store).value, 50, 'pending: only the credit still open');
+});
+
+test('shops set up earlier get the counter dashboard and walk-in sales once, without losing their own changes', async () => {
+  const fresh = buildTemplate('retail', t, {});
+  assert.equal(upgradeCounter(fresh, t), false, 'new shops already have it');
+  // a shop made before: "Sales today" + "Bills today", no walk-in setting, and one widget the owner renamed
+  const old = buildTemplate('retail', t, {});
+  delete old.counterV;
+  delete old.tables.find((x) => x.id === 'invoices').walkIn;
+  const board = old.dashboards[0];
+  board.widgets.splice(0, 2,
+    { id: 'w1', type: 'kpi', title: 'आज की बिक्री', table: 'invoices', period: 'today', dateField: 'date', measure: { op: 'sum', field: 'total' } },
+    { id: 'w2', type: 'kpi', title: 'Bills today', table: 'invoices', period: 'today', dateField: 'date', measure: { op: 'count' } });
+  delete board.widgets.find((x) => x.id === 'w3').sub;
+  board.widgets.find((x) => x.id === 'w4').title = 'Reorder these';
+  assert.equal(upgradeCounter(old, t), true);
+  assert.deepEqual(board.widgets.slice(0, 4).map((x) => x.id), ['w1', 'w1b', 'w3', 'w4']);
+  assert.equal(board.widgets[0].lines, 'payments');
+  assert.equal(board.widgets[2].sub, '{n} unpaid bills, all dates');
+  assert.equal(board.widgets[3].title, 'Reorder these', 'other widgets untouched');
+  assert.deepEqual(old.tables.find((x) => x.id === 'invoices').walkIn, { party: 'customer', payments: 'payments', mode: 'Cash' });
+  assert.equal(upgradeCounter(old, t), false, 'runs once');
+  // an owner who already changed "Sales today" keeps it
+  const custom = buildTemplate('gst', t, { gstin: '27AAPFU0939F1ZV' });
+  delete custom.counterV;
+  custom.dashboards[0].widgets.splice(0, 2, { id: 'w1', type: 'kpi', title: 'Sales this month', table: 'invoices', period: 'month', dateField: 'date', measure: { op: 'sum', field: 'total' } });
+  upgradeCounter(custom, t);
+  assert.equal(custom.dashboards[0].widgets[0].title, 'Sales this month');
+  assert.match(custom.tables.find((x) => x.id === 'invoices').walkIn.when, /Tax Invoice/, 'GST: credit notes are never walk-in cash sales');
 });
 
 test('backup round-trip restores everything', async () => {

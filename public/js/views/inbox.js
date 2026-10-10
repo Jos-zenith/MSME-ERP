@@ -1,8 +1,11 @@
 // Messages to send, alerts, approvals and history.
 import { h, debounce, confirmDialog } from '../ui/dom.js';
 import { t } from '../i18n.js';
+import { icon } from '../ui/icons.js';
 import { pageHeader, tabs, sendCard, emptyState, CHANNEL_ICON, channelName } from '../ui/bits.js';
 import { recordTitle } from '../schema.js';
+import { paymentsPanel, paymentsAttention } from './payments.js';
+import { collectOn } from '../collect.js';
 
 export function inboxView(ctx, tab = 'messages') {
   const { store } = ctx;
@@ -16,10 +19,12 @@ export function inboxView(ctx, tab = 'messages') {
       { id: 'messages', label: t('Messages'), badge: msgs.length },
       { id: 'alerts', label: t('Alerts'), badge: alerts.length },
       { id: 'approvals', label: t('Approvals'), badge: appr.length },
+      collectOn(store) || tab === 'payments' ? { id: 'payments', label: t('Payments'), badge: paymentsAttention(store) } : null,
       { id: 'history', label: t('History') },
-    ], tab, (id) => { location.hash = id === 'messages' ? '#/outbox' : `#/outbox/${id}`; }));
+    ].filter(Boolean), tab, (id) => { location.hash = id === 'messages' ? '#/outbox' : `#/outbox/${id}`; }));
     host.replaceChildren();
-    if (tab === 'messages') {
+    if (tab === 'payments') host.append(paymentsPanel(ctx));
+    else if (tab === 'messages') {
       host.append(h('p.hint', t('These are ready to go. Nothing is sent until you tap the button, and each message is filled in from the latest bill or job when you send it.')));
       if (!msgs.length) host.append(emptyState('💬', t('No messages waiting'), t('When a bill is saved or a job is ready, the customer message appears here.')));
       msgs.forEach((m) => host.append(sendCard(store, m, { showRecordLink: true })));
@@ -35,7 +40,7 @@ export function inboxView(ctx, tab = 'messages') {
           h('p', r.approval.note || r.approval.ruleName),
           ctx.role === 'owner'
             ? h('div.msg-actions',
-              h('button.btn.primary', { onclick: () => store.decideApproval(r.table, r.id, 'approved', ctx.userName) }, `✓ ${t('Approve')}`),
+              h('button.btn.primary', { onclick: () => store.decideApproval(r.table, r.id, 'approved', ctx.userName) }, icon('check', { size: 15 }), t('Approve')),
               h('button.btn', { onclick: () => store.decideApproval(r.table, r.id, 'rejected', ctx.userName) }, `✕ ${t('Reject')}`))
             : h('p.hint', t('Only the owner can approve.'))));
       });

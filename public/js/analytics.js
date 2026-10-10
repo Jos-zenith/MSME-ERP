@@ -53,7 +53,9 @@ export function widgetData(w, store, now = new Date()) {
   const { rows, t } = rowsFor(w, table, store);
   const [from, to] = periodRange(w.period || 'all', now);
   const dateField = w.dateField || t.fields.find((f) => f.type === 'date')?.id || '_created';
-  const dateOf = (x) => (dateField === '_created' ? localDate(x.rec.created) : x.data[dateField]);
+  // a line with no date of its own (a payment imported without one) counts on the bill's date
+  const recDate = w.lines ? table.fields.find((f) => f.type === 'date')?.id : null;
+  const dateOf = (x) => (dateField === '_created' ? localDate(x.rec.created) : x.data[dateField] || (recDate ? x.rec.data[recDate] : null));
 
   const kept = rows.filter((x) => {
     if (from) { const d = dateOf(x); if (!d || String(d).slice(0, 10) < from || String(d).slice(0, 10) > to) return false; }
@@ -66,7 +68,14 @@ export function widgetData(w, store, now = new Date()) {
   const fmtType = op === 'count' ? 'number' : (mField?.type === 'money' ? 'money' : 'number');
 
   if (w.type === 'kpi') {
-    return { kind: 'kpi', value: measureOf(op, valuesOf(kept)), fmt: fmtType, count: kept.length };
+    const out = { kind: 'kpi', value: measureOf(op, valuesOf(kept)), fmt: fmtType, count: new Set(kept.map((x) => x.rec.id)).size };
+    // `split: 'mode'` -> the same number broken down (Cash ₹1,200 · UPI ₹450), biggest first
+    if (w.split) {
+      const parts = new Map();
+      for (const x of kept) { const k = isBlank(x.data[w.split]) ? '—' : String(x.data[w.split]); if (!parts.has(k)) parts.set(k, []); parts.get(k).push(x); }
+      out.parts = [...parts].map(([label, list]) => ({ label, value: measureOf(op, valuesOf(list)) })).filter((p) => p.value).sort((a, b) => b.value - a.value);
+    }
+    return out;
   }
 
   if (w.type === 'list') {

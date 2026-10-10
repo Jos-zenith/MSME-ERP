@@ -7,6 +7,7 @@ import { FIELD_TYPES, COLUMN_TYPES, uniqueId, fieldOf } from '../schema.js';
 import { check } from '../formula.js';
 import { rulesList } from './workflows.js';
 import { dashList } from './dashbuild.js';
+import { icon, iconFor } from '../ui/icons.js';
 
 const TONES = ['', 'good', 'warn', 'bad', 'info'];
 const toneLabel = (x) => ({ '': t('no colour'), good: t('green'), warn: t('amber'), bad: t('red'), info: t('blue') })[x];
@@ -21,9 +22,9 @@ export function buildHome(ctx, tab = 'tables') {
     if (tab === 'dashboards') { body.append(dashList(ctx)); return; }
     const list = h('div.cards-grid');
     for (const tb of store.app.tables) {
-      list.append(h('a.card.tile', { href: `#/build/t/${tb.id}` }, h('div.tile-ic', tb.icon || '📄'), h('h3', tb.name),
+      list.append(h('a.card.tile', { href: `#/build/t/${tb.id}` }, h('div.tile-ic', iconFor(tb.icon, { size: 20 })), h('h3', tb.name),
         h('p.muted', `${tb.fields.length} ${t('fields')} · ${store.count(tb.id)} ${t('records')}`),
-        h('span.link', `✎ ${t('Design')}`)));
+        h('span.link', icon('pen', { size: 14 }), ` ${t('Design')}`)));
     }
     list.append(h('button.card.tile.add', { onclick: async () => {
       const name = await promptDialog(t('Name of the new table (e.g. Orders, Suppliers)'), '');
@@ -35,12 +36,12 @@ export function buildHome(ctx, tab = 'tables') {
       });
       store.touchApp();
       location.hash = `#/build/t/${id}`;
-    } }, h('div.tile-ic', '＋'), h('h3', t('New table'))));
+    } }, h('div.tile-ic', icon('plus', { size: 20 })), h('h3', t('New table'))));
     body.append(h('p.hint', t('A table is a list of things you keep track of: customers, items, orders, service jobs…')), list);
   };
   paint();
   return h('div.build',
-    pageHeader(t('App builder'), h('a.btn.ghost', { href: '#/' }, `← ${t('Back to app')}`)),
+    pageHeader(t('App builder'), h('a.btn.ghost', { href: '#/' }, icon('back', { size: 16 }), t('Back to app'))),
     tabs([{ id: 'tables', label: t('Tables & forms') }, { id: 'rules', label: t('Workflows') }, { id: 'dashboards', label: t('Dashboards') }], tab,
       (id) => { location.hash = id === 'tables' ? '#/build' : `#/build/${id}`; }),
     body);
@@ -64,6 +65,27 @@ function usagesOf(store, table, fieldId) {
 }
 
 // ---- table designer ---------------------------------------------------------------------------------------------
+/** "No customer = paid at the counter": needs a link field (the customer) and a payments-style line list (amount + mode). */
+function walkInToggle(table, save) {
+  const party = table.fields.find((f) => f.type === 'lookup');
+  const pay = table.fields.find((f) => f.type === 'lines' && !f.columns?.some((c) => c.type === 'lookup')
+    && f.columns?.some((c) => c.type === 'money') && f.columns?.some((c) => c.type === 'select'));
+  if (!party || !pay) return null;
+  const modeCol = pay.columns.find((c) => c.type === 'select');
+  const box = h('div');
+  let last = table.walkIn || {};   // keeps a template's condition (e.g. not on credit notes) across off / on
+  const paint = () => box.replaceChildren(
+    h('label.check', h('input', { type: 'checkbox', checked: !!table.walkIn, onchange: (e) => {
+      if (table.walkIn) last = table.walkIn;
+      table.walkIn = e.target.checked ? { mode: modeCol.default || modeCol.options?.[0] || '', ...last, party: party.id, payments: pay.id } : false;
+      save(); paint();
+    } }), ` ${t('With no {party}, a new record is a walk-in sale: saved as paid in full', { party: party.label })}`),
+    table.walkIn ? labeled(t('Paid by'), h('select', { onchange: (e) => { table.walkIn.mode = e.target.value; save(); } },
+      (modeCol.options || []).map((o) => h('option', { value: o, selected: o === table.walkIn.mode }, o)))) : null);
+  paint();
+  return box;
+}
+
 export function tableDesigner(ctx, tableId) {
   const { store } = ctx;
   const table = store.table(tableId);
@@ -328,6 +350,9 @@ export function tableDesigner(ctx, tableId) {
       labeled(t('Icon (any emoji)'), h('input', { value: table.icon || '', maxlength: 4, oninput: (e) => { table.icon = e.target.value; save(); } })),
       labeled(t('Main heading of each record'), h('select', { onchange: (e) => { table.titleField = e.target.value; save(); } }, table.fields.filter((f) => f.type !== 'lines').map((f) => h('option', { value: f.id, selected: f.id === table.titleField }, f.label)))),
       h('label.check', h('input', { type: 'checkbox', checked: !!table.quick, onchange: (e) => { table.quick = e.target.checked; save(); } }), ` ${t('Show a “＋ New” shortcut on the home screen')}`),
+      walkInToggle(table, save),
+      labeled(t('Staff (staff PIN) can'), h('select', { onchange: (e) => { table.staff = e.target.value; save(); } },
+        [['full', t('Add and edit')], ['view', t('Only look (cannot add or change)')], ['none', t('Not see this table')]].map(([v, l]) => h('option', { value: v, selected: (table.staff || 'full') === v }, l)))),
       check('listColumns', t('Columns shown in the list')),
       check('labelFields', t('How a record is named when picked from another form'), t('Add a second detail (like phone) so two people with the same name can be told apart.')),
       check('searchFields', t('What you can type to find a record'), t('The first one ticked ranks first, so an exact item code always wins.')),
@@ -386,7 +411,7 @@ export function tableDesigner(ctx, tableId) {
   paintTabs();
 
   return h('div.designer',
-    pageHeader(`${table.icon || ''} ${table.name}`, h('a.btn.ghost', { href: '#/build' }, `← ${t('All tables')}`),
+    pageHeader({ title: table.name, icon: iconFor(table.icon, { size: 20 }), crumb: { href: '#/build', label: t('App builder') } }, h('a.btn.ghost', { href: '#/build' }, icon('back', { size: 16 }), t('All tables')),
       h('a.btn', { href: `#/t/${tableId}` }, t('Open list'))),
     tabsHost, stage);
 }
