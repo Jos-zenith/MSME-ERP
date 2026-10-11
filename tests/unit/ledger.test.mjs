@@ -7,6 +7,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { Store } from '../../public/js/store.js';
 import { Sync } from '../../public/js/sync.js';
+import { SYNC_PROTOCOL } from '../../public/js/protocol.js';
 import { memoryDb } from '../../public/js/db.js';
 import { buildTemplate } from '../../public/js/templates/index.js';
 
@@ -78,7 +79,7 @@ for (const order of [['A', 'B'], ['B', 'A']]) {
 const exportFrom = async (url, ws) => (await fetch(`${url}/api/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws, token: 'secret-pass-123' }) })).json();
 const pushRaw = (url, ws, store, since = 0) => fetch(`${url}/api/sync`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ ws, token: 'secret-pass-123', since, records: store.dirtyRecords().map(({ dirty, ...r }) => r) }),
+  body: JSON.stringify({ ws, token: 'secret-pass-123', protocol: SYNC_PROTOCOL, since, records: store.dirtyRecords().map(({ dirty, ...r }) => r) }),
 }).then((r) => r.json());
 const both = async (A, B) => { await A.sync.run(); await B.sync.run(); await A.sync.run(); await B.sync.run(); };
 

@@ -16,6 +16,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
+import { protocolProblem, SERVER_ACCEPTS } from '../public/js/protocol.js';
 import { mergeRecords, derivedFieldsOf, ledgerFieldsOf } from '../public/js/ledger.js';
 import { computeRecord } from '../public/js/schema.js';
 import '../public/gst/js/hooks.js';   // GST bills compute their totals with the GST engine, here as on the devices
@@ -465,6 +466,9 @@ function parseJson(raw) {
   try { return JSON.parse(raw.toString('utf8') || '{}'); } catch { throw Object.assign(new Error('Bad JSON'), { status: 400 }); }
 }
 
+/** API calls from devices that read or write shop records: only for a compatible sync protocol (protocol.js). */
+const GATED = new Set(['/api/sync', '/api/live', '/api/passphrase', '/api/collect/setup', '/api/collect/simulate']);
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
@@ -481,6 +485,11 @@ const server = http.createServer(async (req, res) => {
         return send(res, out.status, JSON.stringify(out.json || { error: out.error }), { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       }
       const body = parseJson(raw);
+      // devices outside the accepted sync protocols are turned away before anything is read, created or changed
+      if (GATED.has(url.pathname)) {
+        const bad = protocolProblem(body?.protocol);
+        if (bad) return send(res, bad.status, JSON.stringify({ error: bad.error, code: bad.code, accepts: SERVER_ACCEPTS }), { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      }
       if (url.pathname === '/api/live') return exclusive(() => { handleLive(body, ip, req, res, cors); return null; });
       const routes = { '/api/sync': handleSync, '/api/export': handleExport, '/api/passphrase': handlePassphrase, '/api/collect/setup': handleCollectSetup, '/api/collect/simulate': handleCollectSimulate };
       const out = routes[url.pathname] ? await exclusive(() => routes[url.pathname](body, ip)) : { status: 404, error: 'Not found' };

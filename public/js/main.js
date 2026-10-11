@@ -145,6 +145,8 @@ function paintNet() {
     tip = t('Everything is saved on this device and will sync when the internet is back.');
   } else if (!on) {
     netPill.hidden = true; return;
+  } else if (st === 'update') {
+    tone = 'bad'; text = sync.needs === 'server' ? t('Sync server needs an update') : t('Update to keep syncing'); tip = sync.error;
   } else if (st === 'error') {
     tone = 'bad'; text = t('Sync problem'); tip = sync.error;
   } else if (st === 'syncing' || waiting) {
@@ -162,9 +164,23 @@ function paintNet() {
 }
 setInterval(() => { if (!netPill.hidden) paintNet(); }, 15000);
 
+/** Load the newest app version (the service worker fetches it), then reload. Data on the device is untouched. */
+async function updateApp() {
+  try { await (await navigator.serviceWorker?.getRegistration())?.update(); } catch { /* offline: the reload still tries */ }
+  location.reload();
+}
 function paintBanner(path) {
   banner.replaceChildren();
   banner.hidden = true;
+  // the sync server refuses this app version: everyone on this device must see it, staff included
+  if (sync.needs) {
+    banner.append(h('div.banner.error.update-banner', { role: 'alert' },
+      h('span', sync.needs === 'app'
+        ? t('Update to keep syncing. Everything on this device is kept and will sync after the update.')
+        : t('The sync server needs an update before this device can sync. Nothing on this device is lost.')),
+      sync.needs === 'app' ? h('button.btn.small.primary', { onclick: updateApp }, t('Update now')) : null));
+    banner.hidden = false;
+  }
   if (state.role !== 'owner') return;
   const total = store.app.tables.reduce((n, tb) => n + store.count(tb.id), 0);
   // nag after 7 days without a backup, or 3 days after first use if there has never been one
@@ -313,6 +329,15 @@ async function afterStart() {
   window.addEventListener('online', () => { paintNet(); store.flushWebhooks(); });
   window.addEventListener('offline', paintNet);
   sync.on(paintNet);
+  // the server refused this app's sync protocol (or accepts it again): show or clear the update banner, and fetch the
+  // new version in the background so "Update now" is instant
+  let needs = null;
+  sync.on(() => {
+    if (sync.needs === needs) return;
+    needs = sync.needs;
+    paintBanner((location.hash.slice(1) || '/').split('?')[0]);
+    if (needs === 'app') navigator.serviceWorker?.getRegistration().then((r) => r?.update()).catch(() => {});
+  });
   store.on((e) => {
     paintBadge();
     if (e.type === 'outbox' || e.type === 'approval' || e.type === 'app') paintNav();

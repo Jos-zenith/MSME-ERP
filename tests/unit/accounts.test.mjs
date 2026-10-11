@@ -8,6 +8,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { Store } from '../../public/js/store.js';
 import { Sync } from '../../public/js/sync.js';
+import { SYNC_PROTOCOL } from '../../public/js/protocol.js';
 import { memoryDb } from '../../public/js/db.js';
 import { buildTemplate } from '../../public/js/templates/index.js';
 import { passphraseProblem, suggestPassphrase, workspaceKey } from '../../public/js/security.js';
@@ -20,7 +21,7 @@ async function server(dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-accounts
   const mod = await import(`../../server/server.js?accounts=${Date.now()}${Math.random()}`);
   const srv = await mod.start(0, '127.0.0.1');
   const url = `http://127.0.0.1:${srv.address().port}`;
-  const post = async (route, body) => { const r = await fetch(`${url}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
+  const post = async (route, body) => { const r = await fetch(`${url}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocol: SYNC_PROTOCOL, ...body }) }); return { status: r.status, ...(await r.json()) }; };
   return { url, dir, code: mod.SETUP_CODE, mod, post, close: () => new Promise((r) => srv.close(r)) };
 }
 async function device(url, { fetchFn } = {}) {

@@ -139,7 +139,7 @@ export function settingsView(ctx) {
   const paintStatus = () => {
     const st = sync.status;
     const c = store.meta.sync;
-    status.replaceChildren(pill({ off: t('Not connected'), idle: t('Connected'), syncing: t('Syncing…'), offline: t('Offline: will sync later'), error: t('Problem') }[st], st === 'idle' ? 'good' : st === 'error' ? 'bad' : 'muted'),
+    status.replaceChildren(pill({ off: t('Not connected'), idle: t('Connected'), syncing: t('Syncing…'), offline: t('Offline: will sync later'), error: t('Problem'), update: sync.needs === 'server' ? t('Sync server needs an update') : t('Update to keep syncing') }[st], st === 'idle' ? 'good' : st === 'error' || st === 'update' ? 'bad' : 'muted'),
       sync.lastAt ? h('span.muted', ` ${t('Last sync')}: ${sync.lastAt.toLocaleTimeString()}`) : null, sync.error ? h('div.hint.bad', sync.error) : null,
       c?.refused ? h('div.hint.bad.sync-refused', t('This device stopped syncing because the server turned down the passphrase. If it was changed on another device, type the new one above and press Save & sync now.')) : null,
       c?.weak && !c.refused ? h('div.hint.warn.sync-weak', t('Your sync passphrase is easy to guess. Change it below (every device will need the new one).')) : null);

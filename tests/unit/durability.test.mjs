@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Store } from '../../public/js/store.js';
 import { Sync } from '../../public/js/sync.js';
+import { SYNC_PROTOCOL } from '../../public/js/protocol.js';
 import { memoryDb } from '../../public/js/db.js';
 import { buildTemplate } from '../../public/js/templates/index.js';
 
@@ -33,7 +34,7 @@ async function startProcess(dataDir, port) {
   return child;
 }
 const killHard = (child) => new Promise((resolve) => { child.once('exit', resolve); child.kill('SIGKILL'); });
-const post = (url, p, body) => fetch(`${url}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const post = (url, p, body) => fetch(`${url}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocol: SYNC_PROTOCOL, ...body }) });
 const record = (id, n) => {
   const now = new Date().toISOString();
   return { id, table: 'customers', data: { name: `Customer ${n}` }, created: now, updated: now, deleted: false, vv: { dev1: 1 } };

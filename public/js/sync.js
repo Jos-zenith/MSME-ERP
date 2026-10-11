@@ -3,13 +3,19 @@
 // Config lives in store.meta.sync = { url, ws, token, since, enabled }, plus for the first run `adopt` (download the
 // shop) or `create` + `setupCode` (make a new workspace), `refused` once the server turned the passphrase down (no more
 // automatic tries until someone types it again) and `weak` (works, but would not be accepted for a new workspace).
+import { SYNC_PROTOCOL } from './protocol.js';
+
 const REFUSED = 'The server did not accept the workspace name / passphrase';
+/** The server refused this app's sync protocol (protocol.js): 426 = update this app, 409 = update the server. */
+const incompatible = (status) => (status === 426 ? 'app' : status === 409 ? 'server' : null);
 
 export class Sync {
-  constructor(store, { fetchFn = globalThis.fetch?.bind(globalThis), pushDelay = 800 } = {}) {
+  constructor(store, { fetchFn = globalThis.fetch?.bind(globalThis), pushDelay = 800, protocol = SYNC_PROTOCOL } = {}) {
     this.store = store;
     this.fetch = fetchFn;
-    this.status = 'off';   // off | idle | syncing | offline | error
+    this.protocol = protocol;
+    this.needs = null;     // 'app' | 'server' while the server refuses this app's sync protocol
+    this.status = 'off';   // off | idle | syncing | offline | error | update
     this.error = '';
     this.lastAt = null;
     this.live = false;     // true while the server's change feed is connected: other devices' edits arrive in ~1 s
@@ -64,8 +70,9 @@ export class Sync {
     try {
       const res = await this.fetch(`${cfg.url}/api/live`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ws: cfg.ws, token: cfg.token }), signal: ctl.signal, cache: 'no-store',
+        body: JSON.stringify({ ws: cfg.ws, token: cfg.token, protocol: this.protocol }), signal: ctl.signal, cache: 'no-store',
       });
+      if (incompatible(res.status)) { await this._incompatible(res); throw new Error('incompatible'); }
       if (res.status === 403) { this._refuse(REFUSED); throw new Error('refused'); }
       if (!res.ok || !res.body?.getReader) throw new Error(`live ${res.status}`);
       this.live = true; this._liveBackoff = 1000; this._emit();
@@ -89,7 +96,7 @@ export class Sync {
     const wasMine = this._liveCtl === ctl;
     if (wasMine) this._liveCtl = null;
     if (this.live) { this.live = false; this._emit(); }
-    if (wasMine && !ctl.signal.aborted && this.config?.enabled && !this.config.refused) {
+    if (wasMine && !ctl.signal.aborted && this.config?.enabled && !this.config.refused && this.needs !== 'app') {
       this._liveRetry = setTimeout(() => this.connectLive(), this._liveBackoff);
       this._liveBackoff = Math.min(this._liveBackoff * 2, 30000);
     }
@@ -98,6 +105,18 @@ export class Sync {
     clearTimeout(this._liveRetry);
     this._liveCtl?.abort(); this._liveCtl = null;
     if (this.live) { this.live = false; this._emit(); }
+  }
+
+  /**
+   * The server refuses this app's sync protocol. Nothing was sent or changed, and nothing here is touched: every
+   * record still waiting stays waiting, and goes up once the app (or the server) is updated.
+   */
+  async _incompatible(res) {
+    const out = await res.json().catch(() => ({}));
+    this.needs = incompatible(res.status);
+    this.stopLive();
+    this._set('update', out.error || (this.needs === 'app' ? 'Update to keep syncing' : 'The sync server needs an update'));
+    return Object.assign(new Error(this.error), { shown: true });
   }
 
   /** The server turned the passphrase down: stop trying by ourselves (each try would count as a guess) until it is typed again. */
@@ -125,7 +144,8 @@ export class Sync {
   async _post(path, extra = {}) {
     const cfg = this.config;
     if (!cfg?.enabled || !this.fetch) throw new Error('Connect this device to the sync server first (Settings → Sync)');
-    const res = await this.fetch(`${cfg.url}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: cfg.ws, token: cfg.token, ...extra }) });
+    const res = await this.fetch(`${cfg.url}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: cfg.ws, token: cfg.token, protocol: this.protocol, ...extra }) });
+    if (incompatible(res.status)) throw await this._incompatible(res);
     const out = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(out.error || `Server error ${res.status}`);
     return out;
@@ -154,6 +174,8 @@ export class Sync {
     const cfg = this.config;
     if (!cfg?.enabled || !this.fetch) return { skipped: true };
     if (cfg.refused) return { error: this.error || REFUSED };
+    // this app is too old for the server: no point asking again until it is updated (a reload loads the new version)
+    if (this.needs === 'app') return { error: this.error };
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { this._set('offline'); return { skipped: true }; }
     this._set('syncing');
     try {
@@ -162,13 +184,15 @@ export class Sync {
       const dirty = cfg.adopt ? [] : store.dirtyRecords();
       const appDirty = !!store.meta.appDirty;
       const body = {
-        ws: cfg.ws, token: cfg.token, since: cfg.since || 0,
+        ws: cfg.ws, token: cfg.token, protocol: this.protocol, since: cfg.since || 0,
         records: dirty.map(({ id, table, data, created, updated, deleted, approval, by, vv }) => ({ id, table, data, created, updated, deleted: !!deleted, approval, by, vv })),
         appUpdated: store.app?.updated || '',
         app: !cfg.adopt && (appDirty || !cfg.since) ? store.app : null,
         ...(cfg.create ? { create: true, setupCode: cfg.setupCode || '' } : {}),
       };
       const res = await this.fetch(`${cfg.url}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (incompatible(res.status)) throw await this._incompatible(res);
+      this.needs = null;
       if (res.status === 401 || res.status === 403 || res.status === 400) {
         const why = (await res.json().catch(() => ({}))).error;
         const msg = res.status === 403 && (!why || /passphrase/.test(why)) ? REFUSED : why || REFUSED;

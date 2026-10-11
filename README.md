@@ -372,6 +372,13 @@ import wizard lets you re-map any column that differs.
   and never serves it. Requests that change data run one at a time. Tested by killing the server process (no warning)
   straight after ten acknowledged saves and one acknowledged bank payment, and by making the disk refuse writes.
   Cost: every change rewrites that shop's whole file, so a very large workspace makes each sync slower.
+* **Only compatible app versions sync.** Each app speaks a numbered *sync protocol* that names the rules it follows
+  when writing records ([protocol.js](public/js/protocol.js)): 2 = payments as a ledger, 3 = stock as movements, 4 =
+  "bank-confirmed" only from the server's snapshot. The server accepts a range (now 4 to 4) and refuses anything
+  outside it before reading, creating or changing anything. A device that is too old shows **Update to keep syncing**
+  (a banner with *Update now*, and the status pill), keeps every record it has, and sends them after the update; a
+  device newer than its server is told the server needs updating. The number changes only when the write rules change,
+  never with ordinary releases.
 * **Sync accounts.** A workspace is created only by the shop's first device, which must ask to create it and give the
   **setup code** the server prints when it starts (also in `data/setup-code.txt`; `SETUP_CODE` sets your own,
   `ALLOW_NEW_WORKSPACES=false` turns creation off). Other devices join with the workspace name and passphrase only,
@@ -458,7 +465,10 @@ App settings that matter for payments: *Settings → Your business → UPI ID* (
 
 ## HTTP API
 
-All `POST` bodies are JSON. Workspace endpoints authenticate with `{ ws, token }` (workspace name + passphrase). An
+All `POST` bodies are JSON. Every device call (`/api/sync`, `/api/live`, `/api/passphrase`, `/api/collect/setup`,
+`/api/collect/simulate`) also sends `protocol` (the app's sync protocol, [protocol.js](public/js/protocol.js)); outside the
+server's accepted range it is refused before anything is read: `426 { code: "update_required" }` (update the app) or
+`409 { code: "server_outdated" }` (update the server). Workspace endpoints authenticate with `{ ws, token }` (workspace name + passphrase). An
 unknown workspace is created only with `{ create: true, setupCode }` and a strong passphrase (`400 { error, code:
 "weak_short" | "weak_simple" | "weak_guessable" }` otherwise). A wrong name or passphrase is `403`; too many wrong
 tries are `429`.
@@ -571,10 +581,10 @@ The product was called *MSME Builder*; it is now **Vina**. Existing shops keep w
 * **Merged-in changes do not trigger workflows.** A bill that becomes Paid only because two devices' payments were
   merged does not queue the "receipt when paid" message. Stock that falls to the reorder level only because of another
   device's sales does not raise a low-stock alert until the next sale or edit of that item on this device.
-* **Every device must run the same version.** A device still on an older version merges payments correctly, but its
-  edits to other fields lose to the server's copy without a note, and its stock changes are lost (it writes a number,
-  not a movement). After a passphrase change it keeps retrying the old one, and those tries count toward the workspace's
-  guessing limit, which can briefly block a new device from joining. The app asks to reload when an update is ready.
+* **Outdated app versions are refused, not merged.** The server only syncs with apps that speak a sync protocol it
+  accepts (see *Sync, backup and security*). Apps released before this rule send no protocol number and see a generic
+  "Server error 426" instead of the update banner; reloading the app (or reopening it) loads the new version. The
+  protocol only protects syncing: an outdated device keeps working offline on its own data until it updates.
 * **One passphrase per shop, not per person.** Every device shares the workspace passphrase; there are no per-device
   keys, so cutting off one phone means changing it on all the others. Owner and staff are told apart by the app's
   PINs on each device, not by the server.

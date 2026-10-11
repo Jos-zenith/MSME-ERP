@@ -9,6 +9,7 @@ import { extractKeys } from '../../scripts/extract-i18n.mjs';
 import { listFiles } from '../../scripts/build-sw.mjs';
 import { Store } from '../../public/js/store.js';
 import { Sync } from '../../public/js/sync.js';
+import { SYNC_PROTOCOL } from '../../public/js/protocol.js';
 import { memoryDb } from '../../public/js/db.js';
 import { buildTemplate } from '../../public/js/templates/index.js';
 import { renderTemplate } from '../../public/js/logic.js';
@@ -193,7 +194,7 @@ test('live sync: a change saved on one device reaches the other in about a secon
     assert.ok(Date.now() - t0 < 2000, `arrived in ${Date.now() - t0} ms`);
 
     // a wrong passphrase never gets a feed
-    const bad = await fetch(`${url}/api/live`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: 'live', token: 'wrong-pass' }) });
+    const bad = await fetch(`${url}/api/live`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: 'live', token: 'wrong-pass', protocol: SYNC_PROTOCOL }) });
     assert.equal(bad.status, 403);
   } finally {
     B.sync.stopLive();
@@ -212,7 +213,7 @@ test('sync server: rejects path traversal and oversized garbage', async () => {
     assert.ok([403, 404].includes(trav.status), `traversal answered ${trav.status}`);
     const bad = await fetch(`${base}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{not json' });
     assert.equal(bad.status, 400);
-    const noAuth = await fetch(`${base}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const noAuth = await fetch(`${base}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocol: SYNC_PROTOCOL }) });
     assert.equal(noAuth.status, 400);
     const headers = (await fetch(base)).headers;
     assert.match(headers.get('content-security-policy'), /script-src 'self'/);

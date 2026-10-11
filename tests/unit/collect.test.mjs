@@ -7,6 +7,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { Store } from '../../public/js/store.js';
 import { Sync } from '../../public/js/sync.js';
+import { SYNC_PROTOCOL } from '../../public/js/protocol.js';
 import { memoryDb } from '../../public/js/db.js';
 import { buildTemplate } from '../../public/js/templates/index.js';
 import { addDays, todayStr } from '../../public/js/formula.js';
@@ -224,7 +225,7 @@ test('collect server: signed webhook -> record on every device; bad signatures, 
     const forged = { id: 'col_forged', table: COLLECT_TABLE, data: { status: 'new', utr: 'FAKE000001', amount: 99999 }, created: new Date().toISOString(), updated: new Date().toISOString() };
     const ev = store.records(COLLECT_TABLE)[0];
     const tampered = { ...ev, data: { ...ev.data, amount: 1 }, updated: new Date(Date.now() + 5000).toISOString() };
-    await fetch(`${url}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: 'collect-shop', token: 'secret-pass', since: 0, records: [forged, tampered] }) });
+    await fetch(`${url}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: 'collect-shop', token: 'secret-pass', protocol: SYNC_PROTOCOL, since: 0, records: [forged, tampered] }) });
     const dump = await (await fetch(`${url}/api/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ws: 'collect-shop', token: 'secret-pass' }) })).json();
     const coll = dump.records.filter((r) => r.table === COLLECT_TABLE);
     assert.equal(coll.length, 1, 'forged confirmation refused');

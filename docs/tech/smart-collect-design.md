@@ -153,9 +153,13 @@ mechanism and the separate guarantees it provides:
 - **Workflows do not run on merged-in changes.** If a bill becomes Paid only because two devices' payments were
   merged, the "receipt when paid" message is not queued on either device. Likewise a low-stock alert caused only by
   another device's sales waits for the next local change to that item.
-- **Devices still on an older version** do not send version vectors. Their payment rows are merged correctly (legacy
-  ids), but their plain-field edits lose to the server's copy without a note, and their stock changes are lost (they
-  write a number, not a movement). Every device must update (the app prompts on the next open) before a multi-device pilot.
+- **Devices on an older version are refused, not merged** (fixed 2026-10-11, [protocol.js](../../public/js/protocol.js)).
+  Every device call carries the app's sync protocol; the server accepts a range (4–4 today) and answers 426 (update the
+  app) or 409 (update the server) before authenticating or reading the body's records. The device keeps everything
+  local and sends it after updating. Tests: compat.test.mjs (policy; refusal creates and changes nothing on any device
+  endpoint; an old device keeps its record and syncs it once after updating; a newer app than the server) and the
+  e2e scenario *an app version the sync server no longer accepts…*. Apps from before protocols exist send none and are
+  treated as protocol 1.
 - "Newer" for concurrent plain-field edits uses the record's `updated` time, so device clocks still decide *which*
   value is kept. The other value is never lost: it is in the conflict note.
 

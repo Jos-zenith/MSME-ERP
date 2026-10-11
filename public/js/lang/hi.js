@@ -559,4 +559,10 @@ export default {
   "Stock history": "स्टॉक का हिसाब",
   "deleted": "हटाया गया",
   "A bill with this item was changed differently on two devices at once, so this stock may be off by the difference. Count it and correct the number.": "इस सामान वाला एक बिल एक ही समय पर दो डिवाइस पर अलग-अलग बदला गया, इसलिए स्टॉक में उतना फ़र्क हो सकता है। गिनकर सही संख्या भरें।",
+  // App updates for sync (first draft: please have a native speaker review)
+  "Sync server needs an update": "सिंक सर्वर को अपडेट चाहिए",
+  "The sync server needs an update before this device can sync. Nothing on this device is lost.": "इस डिवाइस के सिंक होने से पहले सिंक सर्वर को अपडेट करना होगा। इस डिवाइस पर कुछ भी नहीं खोया है।",
+  "Update now": "अभी अपडेट करें",
+  "Update to keep syncing": "सिंक जारी रखने के लिए अपडेट करें",
+  "Update to keep syncing. Everything on this device is kept and will sync after the update.": "सिंक जारी रखने के लिए अपडेट करें। इस डिवाइस पर सब कुछ सुरक्षित है और अपडेट के बाद सिंक हो जाएगा।",
 };

@@ -936,6 +936,28 @@ await scenario('sync accounts: the owner connects with the setup code and a sugg
   } finally { await a.close(); await b.close(); }
 });
 
+await scenario('an app version the sync server no longer accepts says "Update to keep syncing", keeps its bill, and syncs it after updating', async (app) => {
+  const { page } = app;
+  await onboard(page);
+  await evalStore(page, `sync.configure({ url: location.origin, ws: 'compat-shop', token: 'secret-pass', create: true, setupCode: '${srv.setupCode}' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
+  // pretend this page is an older app (sync protocol 3) and sell something on it
+  const id = await evalStore(page, `sync.protocol = 3;
+    const it = store.records('items')[0];
+    const r = (await store.saveRecord('invoices', { items: [{ item: it.id, qty: 1 }] })).record;
+    await sync.run(); return r.id;`);
+  await page.waitForSelector('.update-banner');
+  assert.match(await page.$eval('.update-banner', (e) => e.textContent), /Update to keep syncing\. Everything on this device is kept/);
+  assert.match(await page.$eval('.net', (e) => e.textContent), /Update to keep syncing/);
+  assert.equal(await evalStore(page, `return store.getRecord('invoices', '${id}').dirty`), 1, 'the bill is waiting, not lost');
+  await shot(page, 'update-to-keep-syncing');
+  // the update arrives (same device, same stored data, current protocol): the bill goes up and the banner goes away
+  await evalStore(page, `sync.protocol = (await import('./js/protocol.js')).SYNC_PROTOCOL; sync.needs = null; const r = await sync.run(); if (r.error) throw new Error(r.error);`);
+  await page.waitForFunction(() => !document.querySelector('.update-banner'));
+  assert.equal(await evalStore(page, `return store.getRecord('invoices', '${id}').dirty`), undefined, 'sent');
+  // the app itself cancelled its live feed when the server refused its version: expected, not an error
+  app.errors.splice(0, app.errors.length, ...app.errors.filter((e) => !/requestfailed: .*\/api\/live$/.test(e)));
+});
+
 // ===================================================================================================
 await srv.close();
 const failed = results.filter((r) => !r.ok);

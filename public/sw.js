@@ -1,6 +1,6 @@
 // Service worker: makes the app open instantly and work with no internet after the first visit.
 // The file list below is generated: run `npm run build:sw` after adding or renaming files (a test checks it).
-const VERSION = '1af083e5bc';
+const VERSION = '064e7ed694';
 const PRECACHE = [
   "./",
   "./css/app.css",
@@ -27,6 +27,7 @@ const PRECACHE = [
   "./js/logic.js",
   "./js/main.js",
   "./js/print.js",
+  "./js/protocol.js",
   "./js/rules.js",
   "./js/schema.js",
   "./js/security.js",
