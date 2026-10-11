@@ -1,7 +1,7 @@
 // Vina server: serves the app AND (optionally) keeps your devices in sync and backed up.
 // Zero dependencies. Node 18+.   Run:  node server/server.js
 //
-//   PORT=8080  HOST=0.0.0.0  DATA_DIR=./data  ALLOW_NEW_WORKSPACES=true  SETUP_CODE=…  CORS_ORIGIN=*  COLLECT_SANDBOX=true
+//   PORT=8080  HOST=0.0.0.0  DATA_DIR=./data  ALLOW_NEW_WORKSPACES=true  SETUP_CODE=…  CORS_ORIGIN=  TRUST_PROXY=false  COLLECT_SANDBOX=true
 //
 // A new workspace is created only by a device that asks to create one AND gives the setup code. The code is printed
 // when the server starts (and kept in DATA_DIR/setup-code.txt; SETUP_CODE sets your own). ALLOW_NEW_WORKSPACES=false
@@ -28,7 +28,11 @@ const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
 const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
 const ALLOW_NEW = process.env.ALLOW_NEW_WORKSPACES !== 'false';
-const CORS = process.env.CORS_ORIGIN ?? '*';
+// Which web pages may call the API. Unset: only pages served by this server (same origin). Otherwise a comma-separated
+// list of exact origins (https://app.example.com), or * on purpose. TRUST_PROXY=true also accepts the host a reverse
+// proxy reports (X-Forwarded-Host) as "this server".
+const CORS_LIST = (process.env.CORS_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const MAX_BODY = 20 * 1024 * 1024;
 const KEEP_BACKUPS = 14;
 const SANDBOX = process.env.COLLECT_SANDBOX !== 'false';   // "Simulate a payment" in Settings; turn off in production
@@ -450,9 +454,28 @@ function send(res, status, body, headers = {}) {
   res.writeHead(status, { ...SECURITY, ...headers });
   res.end(body);
 }
-function corsHeaders(req) {
-  if (!CORS) return {};
-  return { 'Access-Control-Allow-Origin': CORS, 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '86400' };
+const corsFor = (origin) => ({
+  'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '600', ...(origin === '*' ? {} : { Vary: 'Origin' }),
+});
+/**
+ * May this request use the API? A request without an Origin header is not from a web page (the payment provider's
+ * webhook, a script): CORS does not apply, and it still needs the passphrase or the webhook signature. A web page is
+ * allowed if it was served by this server, or its origin is listed in CORS_ORIGIN. Anything else is refused here,
+ * by the server, not only by the browser (a browser sends some cross-site requests before asking permission).
+ * Returns { ok, headers }.
+ */
+function originCheck(req) {
+  const origin = req.headers.origin;
+  if (!origin) return { ok: true, headers: {} };
+  if (CORS_LIST.includes('*')) return { ok: true, headers: corsFor('*') };
+  if (CORS_LIST.includes(origin)) return { ok: true, headers: corsFor(origin) };
+  let host = '';
+  try { host = new URL(origin).host; } catch { host = ''; }
+  const mine = [req.headers.host, TRUST_PROXY ? req.headers['x-forwarded-host'] : '']
+    .filter(Boolean).flatMap((h) => String(h).split(',').map((x) => x.trim().toLowerCase()));
+  if (host && mine.includes(host.toLowerCase())) return { ok: true, headers: {} };   // same origin: no CORS needed
+  return { ok: false, headers: {} };
 }
 function readRaw(req) {
   return new Promise((resolve, reject) => {
@@ -474,7 +497,12 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const ip = req.socket.remoteAddress || '';
     if (url.pathname.startsWith('/api/')) {
-      const cors = corsHeaders(req);
+      const oc = originCheck(req);
+      if (!oc.ok) {
+        return send(res, 403, JSON.stringify({ error: 'This web site may not use the sync API (origin not allowed). The server owner can allow it with CORS_ORIGIN.' }),
+          { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Vary: 'Origin' });
+      }
+      const cors = oc.headers;
       if (req.method === 'OPTIONS') return send(res, 204, '', cors);
       if (url.pathname === '/api/health') return send(res, 200, JSON.stringify({ ok: true }), { ...cors, 'Content-Type': 'application/json' });
       if (req.method !== 'POST') return send(res, 405, '{"error":"POST only"}', { ...cors, 'Content-Type': 'application/json' });

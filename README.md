@@ -455,7 +455,8 @@ Server environment variables:
 | `DATA_DIR` | `./data` | Workspace files, the Smart Collect hook index and daily backups |
 | `ALLOW_NEW_WORKSPACES` | `true` | `false` stops anyone creating a new workspace on this server |
 | `SETUP_CODE` | generated | Code a shop's first device must give to create a workspace. Without it, one is made on first start, printed, and kept in `DATA_DIR/setup-code.txt` |
-| `CORS_ORIGIN` | `*` | CORS header for the API |
+| `CORS_ORIGIN` | *(unset)* | Web pages from other origins allowed to use the API: a comma-separated list of exact origins (`https://vina.example.com`), or `*` on purpose. Unset: only pages served by this server; other sites are refused by the server (403), not just by the browser. **Set this if the app is hosted somewhere else than the sync server** (for example a static host) |
+| `TRUST_PROXY` | `false` | `true` behind a reverse proxy that does not pass the original `Host`: the `X-Forwarded-Host` it sends then also counts as this server |
 | `COLLECT_SANDBOX` | `true` | Allows *Simulate a payment*. **Set `false` in production** |
 
 App settings that matter for payments: *Settings → Your business → UPI ID* (the merchant VPA for the QR), *Settings
