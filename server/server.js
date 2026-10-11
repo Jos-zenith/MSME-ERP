@@ -252,6 +252,9 @@ function recompute(doc, rec) {
   try { return { ...rec, data: computeRecord(table, rec.data, ctx) }; } catch (e) { console.error('recompute', e); return rec; }
 }
 
+/** What a device may send for a record. `origin` and `bank` (payment provenance) are only ever added by this server. */
+const RECORD_KEYS = ['id', 'table', 'data', 'created', 'updated', 'deleted', 'approval', 'by', 'vv'];
+
 function handleSync(body, ip) {
   const a = authenticate(body, ip);
   if (a.error) return a;
@@ -268,6 +271,8 @@ function handleSync(body, ip) {
 
   for (let r of Array.isArray(body.records) ? body.records : []) {
     if (!r || typeof r.id !== 'string' || typeof r.table !== 'string' || typeof r.updated !== 'string') continue;
+    // only the fields a record has; anything else a device sends (an origin stamp, a bank snapshot...) is dropped
+    r = Object.fromEntries(RECORD_KEYS.filter((k) => k in r).map((k) => [k, r[k]]));
     const cur = doc.records[r.id];
     if (r.table === '_collect' || cur?.table === '_collect') {
       // bank confirmations are created only by the webhook; devices may file them (matched, ignored) but never

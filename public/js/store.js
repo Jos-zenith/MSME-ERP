@@ -487,7 +487,14 @@ export class Store {
     const table = this.table(rec.table);
     if (rec.table.startsWith('_') || !table) {
       // system records (bank confirmations) and tables this device does not know: newest copy wins, as before
-      if (cur && cur.updated >= rec.updated) return false;
+      if (cur && cur.updated >= rec.updated) {
+        // ...except the bank's facts: those come from the server, whatever this copy's own (newer) filing says
+        if (rec.origin !== 'server' || (cur.origin === 'server' && stable(cur.bank) === stable(rec.bank))) return false;
+        Object.assign(cur, { origin: 'server', bank: rec.bank });
+        this._put(cur); this._persistRecord(cur);
+        this.emit({ type: 'record', table: rec.table, id: rec.id });
+        return true;
+      }
       const next = { ...rec }; delete next.dirty;
       this._put(next); this._persistRecord(next);
       this.emit({ type: 'record', table: rec.table, id: rec.id });
@@ -541,7 +548,9 @@ export class Store {
     for (const k of ['counters', 'runs', 'device']) this._persistMeta(k);
     this.app = bk.app;
     this._persistMeta('app');
-    for (const r of bk.records || []) { r.dirty = 1; this._put(r); }
+    // a backup file is not a source of bank confirmations: their provenance (origin, bank) comes only from the sync
+    // server, which sends it again on the next sync
+    for (const r of bk.records || []) { delete r.origin; delete r.bank; r.dirty = 1; this._put(r); }
     // totals recomputed from the restored rows (after every record is in, so linked customers and items resolve)
     for (const r of bk.records || []) {
       const tb = bk.app.tables?.find((x) => x.id === r.table);
