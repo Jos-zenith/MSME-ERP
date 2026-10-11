@@ -465,7 +465,6 @@ export default {
   "Needs attention": "ध्यान दें",
   "Search bills, customers, items…": "बिल, ग्राहक, सामान खोजें…",
   "Today": "आज",
-  "Add your UPI ID in Settings to show a QR for the customer to scan.": "ग्राहक के स्कैन के लिए QR दिखाने को सेटिंग्स में अपना UPI ID डालें।",
   "Billing counter": "बिलिंग काउंटर",
   "Change to return": "लौटाने हैं",
   "Clear the bill": "बिल साफ़ करें",
@@ -578,4 +577,11 @@ export default {
   "Refund recorded on the bill.": "रिफ़ंड बिल पर दर्ज हुआ।",
   "Refunded or reversed by the bank": "बैंक ने लौटाया या वापस लिया",
   "reversal": "वापसी",
+  // Counter on phones (first draft: please have a native speaker review)
+  "Add your UPI ID once: every bill then shows a QR for the exact amount.": "अपनी UPI ID एक बार जोड़ें: फिर हर बिल पर सही रकम का QR दिखेगा।",
+  "Ask the owner to add the shop's UPI ID to show a QR here.": "यहाँ QR दिखाने के लिए मालिक से दुकान की UPI ID जोड़ने को कहें।",
+  "Change how it is paid": "भुगतान का तरीका बदलें",
+  "Show QR": "QR दिखाएँ",
+  "That does not look like a UPI ID (name@bank).": "यह UPI ID जैसी नहीं लगती (नाम@बैंक)।",
+  "Your UPI ID": "आपकी UPI ID",
 };

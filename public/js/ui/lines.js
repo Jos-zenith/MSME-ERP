@@ -25,6 +25,8 @@ const QTY_RE = /^(.*?)\s*(?:[*×]|\s[xX]\s)\s*(\d+(?:\.\d+)?)\s*$/;
 export function linesEditor({ store, table, field, getRows, changed, getData, onExit, readOnlyPresets = false }) {
   const cols = (field.columns || []);
   const visible = cols.filter((c) => !c.hidden);
+  // the line's own total (the last calculated money column): the one figure a small screen must always show
+  const totalId = field.totalColumn || [...visible].reverse().find((c) => isComputed(c) && c.type === 'money')?.id;
   const editable = visible.filter((c) => !isComputed(c));
   const flow = (field.flow || editable.map((c) => c.id)).filter((id) => editable.some((c) => c.id === id));
   let cells = []; // cells[i][colId] = control
@@ -58,7 +60,7 @@ export function linesEditor({ store, table, field, getRows, changed, getData, on
           onPick: () => { const idx = flow.indexOf(col.id); focusCell(i, flow[idx + 1] || flow[idx]); },
         });
         rowCells[col.id] = ctl;
-        tr.append(h('td', { class: `c-${col.type}${isComputed(col) ? ' c-calc' : ''}`, dataset: { c: col.id, label: col.label } }, ctl.el));
+        tr.append(h('td', { class: `c-${col.type}${isComputed(col) ? ' c-calc' : ''}${col.id === totalId ? ' c-total' : ''}`, dataset: { c: col.id, label: col.label } }, ctl.el));
       }
       tr.append(h('td.rm', h('button.icon-btn', { type: 'button', tabindex: '-1', 'aria-label': t('Delete row'), onclick: () => deleteRow(i) }, '✕')));
       tbody.append(tr);

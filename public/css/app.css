@@ -13,7 +13,10 @@
   --shadow: 0 1px 2px rgba(16,24,40,.05); --shadow-md: 0 4px 16px rgba(16,24,40,.08); --shadow-lg: 0 12px 40px rgba(16,24,40,.18);
   /* chart palette (categorical slots + ink) */
   --series-1: #1f6fd1; --series-2: #e8762d; --series-3: #14a06b; --grid: #e9ecf1; --axis: #cfd4dd; --tick: #6b7489;
-  --radius: 8px; --radius-sm: 6px; --side: 232px; --bar-h: 52px; --ctl: 34px;
+  --radius: 10px; --radius-sm: 7px; --side: clamp(208px, 15vw, 248px); --bar-h: 54px;
+  --ctl: clamp(36px, .6vw + 30px, 40px);           /* controls grow a little on big screens, never below 36 px */
+  --gap: clamp(.75rem, .9vw, 1.25rem);              /* space between cards */
+  --pad: clamp(.9rem, 1.8vw, 2rem);                 /* page margins */
 }
 @media (prefers-color-scheme: dark) {
   :root[data-theme="auto"] {
@@ -41,7 +44,7 @@
 /* ---- base ------------------------------------------------------------------------------------------------------ */
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: clamp(14px, .25vw + 11.5px, 15px)/1.5 "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans", "Helvetica Neue", sans-serif; -webkit-font-smoothing: antialiased; }
 h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -.01em; margin: 0; } h2 { font-size: 1.1rem; font-weight: 600; margin: 0; }
 h3 { font-size: .95rem; font-weight: 600; margin: 0 0 .6rem; } h4 { margin: .9rem 0 .4rem; font-size: .86rem; font-weight: 600; color: var(--ink-2); }
 a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; } p { margin: .4rem 0 .8rem; }
@@ -75,7 +78,7 @@ kbd { font: 600 .68rem/1.5 ui-monospace, Consolas, monospace; border: 1px solid 
 .pill[data-tone=bad] { background: var(--bad-bg); color: var(--bad); } .pill[data-tone=info] { background: var(--info-bg); color: var(--info); }
 .badge { display: inline-block; min-width: 1.2rem; padding: 0 .35rem; border-radius: 99px; background: var(--bad); color: #fff; font-size: .68rem; font-weight: 700; text-align: center; line-height: 1.2rem; margin-left: .4rem; }
 .bell .badge { position: absolute; top: 1px; right: 0; margin: 0; box-shadow: 0 0 0 2px var(--surface); }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.1rem; box-shadow: var(--shadow); margin-bottom: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: clamp(.9rem, 1.1vw, 1.3rem) clamp(1rem, 1.3vw, 1.5rem); box-shadow: var(--shadow); margin-bottom: var(--gap); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin: -.1rem 0 .8rem; } .card-head h3 { margin: 0; }
 .row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .6rem 0; }
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; } .two > * { min-width: 0; }
@@ -120,7 +123,7 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 .nav-sec { margin: 1rem .7rem .3rem; font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--side-muted); }
 .nav-foot { margin-top: auto; padding-top: .8rem; border-top: 1px solid var(--side-line); display: grid; gap: .1rem; }
 .nav-btn.handover .i { color: #7fb2ff; }
-.content { padding: 1.1rem 1.5rem 5rem; min-width: 0; max-width: 1360px; width: 100%; } main:focus { outline: none; }
+.content { padding: calc(var(--pad) * .8) var(--pad) 5rem; min-width: 0; max-width: 1680px; width: 100%; margin: 0 auto; } main:focus { outline: none; }
 .scrim { display: none; }
 
 /* page header: icon, breadcrumb, title (+ status), subtitle; actions on the right */
@@ -245,14 +248,14 @@ th.act, td.act { width: 1%; text-align: right; white-space: nowrap; }
 .big-btn { display: inline-flex; align-items: center; gap: .5rem; height: 40px; padding: 0 1.1rem; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: .95rem; font-weight: 600; text-decoration: none; white-space: nowrap; box-shadow: 0 1px 2px rgba(16,24,40,.15), 0 0 0 1px var(--accent); }
 .big-btn:hover { background: var(--accent-hover); text-decoration: none; } .big-btn kbd { margin-left: .4rem; background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.32); color: #fff; }
 /* KPIs: one strip, cells divided by rules (not a pile of cards) */
-.kpi-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.kpi-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: var(--gap); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 .kpi-strip .kpi { margin: 0; border: 0; border-radius: 0; box-shadow: none; padding: .9rem 1.1rem; border-right: 1px solid var(--line); }
 .kpi-strip .kpi:last-child { border-right: 0; }
 .kpi { margin: 0; } .kpi-label { font-size: .78rem; font-weight: 600; color: var(--muted); }
 .kpi-value { font-size: 1.45rem; font-weight: 650; letter-spacing: -.01em; line-height: 1.25; margin-top: .25rem; font-variant-numeric: tabular-nums; color: var(--ink); }
 .kpi-sub { font-size: .76rem; color: var(--muted); margin-top: .15rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .kpi-strip .kpi:first-child .kpi-value { color: var(--good); }
-.home-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 1rem; align-items: start; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: var(--gap); align-items: start; }
 .home-main > .card, .home-side > .card { margin-bottom: 1rem; }
 .recv-total { display: flex; align-items: baseline; gap: .7rem; flex-wrap: wrap; margin-bottom: .6rem; } .recv-total b { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; } .recv-lbl { font-size: .82rem; color: var(--muted); }
 .recv-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--surface-3); } .recv-cur { background: var(--accent); } .recv-over { background: var(--over); }
@@ -269,7 +272,7 @@ th.act, td.act { width: 1%; text-align: right; white-space: nowrap; }
 .recent a, .mini-list a { display: flex; gap: .7rem; align-items: center; padding: .55rem .2rem; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); font-size: .9rem; }
 .mini-list a:hover { background: var(--surface-2); } .recent .amt, .mini-list a > :last-child:not(b) { margin-left: auto; font-variant-numeric: tabular-nums; } .mini-list a b { flex: 1; font-weight: 500; }
 .history li { padding: .5rem 0; border-bottom: 1px solid var(--line); }
-.kpi-row, .widgets { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 1rem; }
+.kpi-row, .widgets { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 1rem; }
 .widgets { grid-template-columns: repeat(2, minmax(0, 1fr)); } .widgets .span-2 { grid-column: span 2; } .widgets .kpi { grid-column: span 1; } .widgets > .card { margin: 0; }
 
 /* ---- charts ---------------------------------------------------------------------------------------------------------- */
@@ -375,7 +378,7 @@ body.pos-mode .sidebar { position: fixed; z-index: 40; top: var(--bar-h); left: 
 body.pos-mode.nav-open .sidebar { transform: none; box-shadow: 6px 0 24px rgba(0,0,0,.3); }
 body.pos-mode.nav-open .scrim { display: block; position: fixed; inset: var(--bar-h) 0 0 0; background: rgba(0,0,0,.35); z-index: 35; }
 body.pos-mode .content { max-width: none; padding: .8rem 1rem 1rem; } body.pos-mode .banners { display: none; }
-.pos { display: grid; grid-template-columns: minmax(0, 65fr) minmax(340px, 35fr); gap: 1rem; height: calc(100vh - var(--bar-h) - 1.8rem); min-height: 520px; }
+.pos { display: grid; grid-template-columns: minmax(0, 65fr) minmax(340px, 35fr); gap: var(--gap); height: calc(100vh - var(--bar-h) - 1.8rem); min-height: 520px; }
 .pos-main, .pos-side { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); min-height: 0; }
 .pos-main { display: flex; flex-direction: column; gap: .8rem; padding: 1rem; }
 .pos-head { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; } .pos-head .page-title { flex: 1; }
@@ -412,45 +415,72 @@ body.pos-mode .content { max-width: none; padding: .8rem 1rem 1rem; } body.pos-m
 #print-host { display: none; }
 @media print { body.print-host-on > *:not(#print-host) { display: none !important; } body.print-host-on #print-host { display: block; } body.print-host-on .doc { box-shadow: none; border: 0; } }
 
-/* ---- medium screens: one column on the home screen ---------------------------------------------------------------------- */
-@media (max-width: 1180px) {
-  .home-grid { grid-template-columns: 1fr; }
+/* ---- responsive tiers ------------------------------------------------------------------------------------------------------
+   wide (> 1280)    full rail, two-column home, content grows to 1680 px and centres
+   laptop (≤ 1280)  rail narrows (fluid --side), home stays two columns down to 1024
+   tablet (≤ 960)   off-canvas menu, tables stay tables, forms keep two columns, the counter stacks with a bottom bar
+   phone (≤ 640)    compact two-line list rows, single-column forms, item lines as cards, thumb-sized controls */
+@media (max-width: 1280px) {
   .who-txt { display: none; }
 }
+@media (max-width: 1024px) {
+  .home-grid { grid-template-columns: 1fr; }
+  .top-search { width: min(320px, 34vw); }
+}
 
-/* ---- small screens: off-canvas menu, cards instead of tables, thumb-sized controls --------------------------------------- */
-@media (max-width: 860px) {
-  :root { --ctl: 42px; }
-  body { font-size: 15px; }
+/* ---- tablet: off-canvas menu, the rest keeps its desktop shape ------------------------------------------------------------- */
+@media (max-width: 960px) {
   #nav-toggle { display: inline-flex; margin-left: .3rem; } .layout { grid-template-columns: 1fr; background: none; }
   .brand { width: auto; background: none; color: var(--ink); border: 0; padding: 0 .3rem; margin: 0; min-width: 0; } .brand b { max-width: 40vw; }
-  .top-search, .who, .top-new-lbl, .top-help { display: none; } .top-new { width: 36px; padding: 0; }
-  .topbar { padding: 0 .7rem 0 0; gap: .25rem; }
+  .top-help { display: none; }
+  .topbar { padding: 0 .7rem 0 0; gap: .3rem; }
   .sidebar { position: fixed; z-index: 40; top: var(--bar-h); left: 0; width: min(82vw, 290px); height: calc(100vh - var(--bar-h)); transform: translateX(-102%); transition: transform .18s; box-shadow: none; }
   .nav-item { height: 44px; }
   body.nav-open .sidebar { transform: none; box-shadow: 6px 0 24px rgba(0,0,0,.3); } body.nav-open .scrim { display: block; position: fixed; inset: var(--bar-h) 0 0 0; background: rgba(0,0,0,.45); z-index: 35; }
-  .content { padding: .8rem .8rem 5rem; } .layout-2 { grid-template-columns: 1fr; } .panel { position: static; max-height: none; }
+  .layout-2 { grid-template-columns: 1fr; } .panel { position: static; max-height: none; }
+  .widgets { grid-template-columns: 1fr; } .widgets .span-2 { grid-column: span 1; }
+  /* the counter: items first, then payment; total, mode and Save stay on screen in a bar at the bottom */
+  .pos { grid-template-columns: 1fr; height: auto; min-height: 0; padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
+  .pos-main .grid-wrap { flex: none; } .pos-side { overflow: visible; } .pos-keys { display: none; }
+  .pos-side .pos-total, .pos-side .pos-save { display: none; }
+  .pos > .pos-bar { display: flex; }
+  body.pos-mode .brand b { max-width: 40vw; }
+}
+
+/* ---- phone: cards instead of wide tables, thumb-sized controls ------------------------------------------------------------- */
+@media (max-width: 640px) {
+  :root { --ctl: 44px; --pad: .8rem; }
+  body { font-size: 15px; }
+  .top-search, .who, .top-new-lbl { display: none; } .top-new { width: 40px; padding: 0; }
+  .content { padding: .8rem .8rem 5rem; }
   .page-head { gap: .6rem; } .page-ic { width: 32px; height: 32px; } .page-actions { width: 100%; }
   .home-head .page-actions { width: 100%; } .big-btn { flex: 1; justify-content: center; height: 48px; } .big-btn kbd { display: none; }
   .form { padding: .8rem .8rem 0; } .form-grid { grid-template-columns: 1fr; } .fld, .fld.w-half, .fld.w-third { grid-column: span 1; }
   .fld.computed.w-full { grid-column: span 1; }
-  .two { grid-template-columns: 1fr; } .widgets { grid-template-columns: 1fr; } .widgets .span-2 { grid-column: span 1; } .next-grid { grid-template-columns: 1fr; }
+  .two { grid-template-columns: 1fr; } .next-grid { grid-template-columns: 1fr; }
   .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpi-strip .kpi { border-bottom: 1px solid var(--line); padding: .75rem .85rem; } .kpi-strip .kpi:nth-child(2n) { border-right: 0; }
   .kpi-value { font-size: 1.2rem; }
   .search-box { width: 100%; } .chips.seg { overflow-x: auto; max-width: 100%; }
+  /* lists: each row is two short lines (first value bold on the left), not a tall labelled card */
   table.data thead { display: none; } table.data, table.data tbody, table.data tr, table.data td { display: block; width: 100%; }
   table.data tr { border-bottom: 1px solid var(--line); padding: .5rem .2rem; } table.data td { border: 0; padding: .15rem .8rem; text-align: left !important; display: flex; justify-content: space-between; gap: 1rem; }
   table.data td::before { content: attr(data-label); color: var(--muted); font-size: .8rem; }
-  table.data tr.row { display: grid; grid-template-columns: 1fr 1fr; gap: .35rem 1rem; padding: .75rem .9rem; }
-  table.data tr.row td { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
-  table.data tr.row td::before { font-size: .68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  table.data tr.row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .2rem .8rem; padding: .7rem .9rem; }
+  table.data tr.row td { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; font-size: .9rem; }
+  table.data tr.row td::before { font-size: .66rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
   table.data tr.row td:first-child { grid-column: 1 / -1; font-weight: 700; font-size: 1rem; } table.data tr.row td:first-child::before { content: none; }
   table.data tr.row td.act { grid-column: 1 / -1; align-items: flex-end; } table.data tr.row td.act::before { content: none; } table.data tr.row td.act:empty { display: none; }
-  .recent-card table.data { margin: 0; width: 100%; } .recent-card table.data td:first-child, .recent-card table.data td:last-child { padding: 0; }
+  /* recent bills on the home screen: number, customer and amount on one line; status and date under it */
+  .recent-card table.data { margin: 0; width: 100%; }
+  .recent-card table.data tr.row { grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; }
+  .recent-card table.data tr.row td::before { content: none; }
+  .recent-card table.data tr.row td:nth-child(2) { order: -3; font-weight: 700; } .recent-card table.data tr.row td:nth-child(3) { order: -2; color: var(--ink-2); }
+  .recent-card table.data tr.row td:nth-child(5) { order: -1; font-weight: 700; align-items: flex-end; }
+  .recent-card table.data tr.row td:first-child { grid-column: auto; font-weight: 400; font-size: .8rem; color: var(--muted); order: 1; grid-column: 2 / -1; align-items: flex-end; }
+  .recent-card table.data tr.row td:nth-child(4) { order: 0; }
   .net { height: 26px; padding: 0 .55rem; font-size: .72rem; }
   .banner.tip { display: none; }   /* keyboard tips: no keyboard on a phone */
   /* bill entry: each item line becomes a small card, no sideways scrolling */
-  .fld.computed.w-full { grid-column: span 1; }
   table.grid { min-width: 0; } table.grid thead { display: none; } table.grid, table.grid tbody { display: block; }
   table.grid tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 40px; gap: .4rem; padding: .65rem .6rem; border-bottom: 1px solid var(--line); }
   table.grid td, table.grid td.c-number, table.grid td.c-money, table.grid td.c-date, table.grid td.c-lookup { display: flex; flex-direction: column; gap: .15rem; padding: 0; border: 0; min-width: 0; width: auto; }
@@ -463,6 +493,15 @@ body.pos-mode .content { max-width: none; padding: .8rem 1rem 1rem; } body.pos-m
   table.grid td.c-calc .out { min-height: 0; padding: 0; font-size: 1.05rem; }
   table.grid td input, table.grid td select { height: 42px; }
   table.grid tbody tr:hover td { background: none; }
+  /* at the counter, a line is just item, quantity, rate and its amount (discount and tax come from the item) */
+  .pos table.grid tr { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) 40px; padding: .55rem .5rem; }
+  .pos table.grid td.c-lookup { grid-column: 1 / 4; grid-row: 1; }
+  .pos table.grid td.rm { grid-column: 4; grid-row: 1; }
+  .pos table.grid td[data-c=qty] { grid-column: 1; grid-row: 2; } .pos table.grid td[data-c=rate] { grid-column: 2; grid-row: 2; }
+  .pos table.grid td.c-total { grid-column: 3 / 5; grid-row: 2; flex-direction: column; align-items: flex-end; justify-content: flex-end; }
+  .pos table.grid td[data-c]:not(.c-lookup):not([data-c=qty]):not([data-c=rate]):not(.c-total) { display: none; }
+  .pos-main { padding: .7rem; gap: .6rem; }
+  .pos-head .page-sub, .pos-head .page-ic { display: none; } .pos-head h1 { font-size: 1.1rem; } .pos-head .page-actions { width: auto; }
   /* one solid bar at the bottom of the screen: Save always reachable with a thumb */
   .form-actions { display: grid; grid-template-columns: 1fr auto auto; margin: .8rem -.8rem 0; padding: .6rem .8rem calc(.6rem + env(safe-area-inset-bottom)); border-radius: 0; }
   .form-actions .btn { padding: 0 .7rem; font-size: .9rem; } .form-actions kbd { display: none; }
@@ -470,8 +509,6 @@ body.pos-mode .content { max-width: none; padding: .8rem 1rem 1rem; } body.pos-m
   .gst-figs, .gst-page .gst-figs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .usual { padding: .5rem; }
   .doc { padding: 16px; } .cond { grid-template-columns: 1fr; } .pin-row { grid-template-columns: 1fr 1fr; } .kbd-hint { display: none; }
   .bars li { grid-template-columns: 1fr auto; } .bars .bar-track { grid-column: span 2; order: 3; }
-  .pos { grid-template-columns: 1fr; height: auto; min-height: 0; } .pos-main .grid-wrap { flex: none; } .pos-side { overflow: visible; } .pos-keys { display: none; }
-  body.pos-mode .brand b { max-width: 40vw; }
 }
 @media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation: none !important; transition: none !important; } }
 @media (forced-colors: active) { .bar, .bar-fill { forced-color-adjust: none; fill: Highlight; background: Highlight; } }
@@ -509,3 +546,12 @@ body.pos-mode .content { max-width: none; padding: .8rem 1rem 1rem; } body.pos-m
 /* ---- sync conflicts and payment history ------------------------------------------------------------------------------- */
 .conflict-banner { align-items: flex-start; } .conflict-banner ul { margin: .3rem 0 0; padding-left: 1.1rem; } .conflict-banner li { margin: .15rem 0; }
 .reversals td:not(.num) { color: var(--ink-2); } .reversals td.num { text-decoration: line-through; color: var(--muted); }
+
+/* ---- counter on phones and tablets: a bar at the bottom with the total and Save ----------------------------------------- */
+.pos-bar { display: none; position: fixed; z-index: 25; left: 0; right: 0; bottom: 0; gap: .6rem; align-items: center;
+  padding: .55rem .8rem calc(.55rem + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -4px 16px rgba(16,24,40,.08); }
+.pos-bar-total { flex: 1; display: grid; justify-items: start; gap: 0; border: 0; background: none; padding: 0; cursor: pointer; color: var(--ink); text-align: left; min-width: 0; }
+.pos-bar-total small { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.pos-bar-total b { font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.pos-bar-save { height: 48px; padding: 0 1.2rem; font-size: 1rem; flex: none; }
+.upi-ask .hint { margin: 0 0 .4rem; } .upi-ask-row { display: flex; gap: .4rem; } .upi-ask-row input { flex: 1; min-width: 0; }

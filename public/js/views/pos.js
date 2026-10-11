@@ -98,6 +98,13 @@ export function posView(ctx) {
     h('option', { value: 'thermal' }, t('Receipt (80 mm)')), h('option', { value: 'a4' }, 'A4'));
   paperSel.value = read('paper', 'thermal');
   const saveBtn = h('button.btn.primary.pos-save', { type: 'button', onclick: () => save() });
+  // phones and tablets: the total, how it is being paid and Save stay on screen at the bottom (the side panel scrolls)
+  const barTotal = h('b'), barMode = h('small');
+  const barSave = h('button.btn.primary.pos-bar-save', { type: 'button', onclick: () => save() });
+  const tenderAnchor = h('div.pos-lbl', t('Paid by'));
+  const bar = h('div.pos-bar', { role: 'region', 'aria-label': t('Total') },
+    h('button.pos-bar-total', { type: 'button', title: t('Change how it is paid'), onclick: () => tenderAnchor.scrollIntoView({ behavior: 'smooth', block: 'center' }) }, barMode, barTotal),
+    barSave);
   const lastBox = h('div.pos-last', { 'aria-live': 'polite' });
 
   const isCash = () => tender === 0;
@@ -111,6 +118,9 @@ export function posView(ctx) {
   }
   function paintSave() {
     saveBtn.replaceChildren(icon(printOn ? 'printer' : 'check', { size: 18 }), h('span', printOn ? t('Save & print') : t('Save bill')), h('kbd', 'Enter'));
+    barSave.replaceChildren(icon(printOn ? 'printer' : 'check', { size: 18 }), h('span', printOn ? t('Save & print') : t('Save bill')));
+    barTotal.textContent = money(data.total);
+    barMode.textContent = tender === 'credit' ? t('Credit') : modes[tender] || '';
   }
   function paintSide() {
     const shown = (table.print?.totals || ['total']).filter((fid) => !['paid', 'balance', 'total', discount?.id].includes(fid)).map((fid) => fieldOf(table, fid)).filter(Boolean);
@@ -128,7 +138,7 @@ export function posView(ctx) {
     const qr = isUpi() && toNum(data.total) > 0 ? paymentQr(store, table, { id: rid, data }, 112) : null;
     qrBox.hidden = !isUpi();
     qrBox.replaceChildren(...(qr ? [h('div.qr', qr.svg), h('div', h('b', `${t('Scan to pay')} ${money(qr.amount)}`), h('div.muted', qr.vpa), upiStatus(qr))]
-      : [h('p.hint', store.business.upi ? t('Scan an item to show the QR.') : t('Add your UPI ID in Settings to show a QR for the customer to scan.'))]));
+      : [store.business.upi ? h('p.hint', t('Scan an item to show the QR.')) : upiAsk()]));
     creditNote.hidden = tender !== 'credit';
     creditNote.textContent = tender === 'credit' && party ? t('{amount} goes on the customer\'s account.', { amount: money(data.total) }) : '';
     paintChange();
@@ -150,6 +160,19 @@ export function posView(ctx) {
       sandbox ? h('button.link.tiny', { type: 'button', onclick: async () => {
         try { await ctx.sync.simulatePayment({ amount: qr.amount, ref: qr.ref, name: t('Sandbox customer') }); } catch (e) { toast(e.message, { kind: 'warn' }); }
       } }, t('Simulate payment (sandbox)')) : null);
+  }
+  /** No UPI ID yet: ask for it right here, the moment it is needed (the owner only; staff are told who can). */
+  function upiAsk() {
+    if (ctx.role !== 'owner') return h('p.hint', t('Ask the owner to add the shop\'s UPI ID to show a QR here.'));
+    const inp = h('input', { placeholder: 'yourshop@okhdfcbank', 'aria-label': t('Your UPI ID'), autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+    const go = () => {
+      const v = inp.value.trim();
+      if (!/^[\w.\-]{2,}@[a-z][\w.\-]{1,}$/i.test(v)) { toast(t('That does not look like a UPI ID (name@bank).'), { kind: 'warn' }); inp.focus(); return; }
+      store.business.upi = v; store.touchApp(); paintSide(); focusScan();
+    };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go(); } });
+    return h('div.upi-ask', h('p.hint', t('Add your UPI ID once: every bill then shows a QR for the exact amount.')),
+      h('div.upi-ask-row', inp, h('button.btn.primary', { type: 'button', onclick: go }, t('Show QR'))));
   }
   function setTender(x) {
     if (x === 'credit' && !hasParty()) { toast(t('Pick a customer first (F8)'), { kind: 'warn' }); custCtl?.focusEl?.focus(); return; }
@@ -250,9 +273,10 @@ export function posView(ctx) {
       party ? h('div.pos-cust', h('div.pos-lbl', party.label, h('kbd', 'F8')), custCtl.el) : null,
       totalsBox,
       h('div.pos-total', h('span', t('Total')), totalEl),
-      h('div.pos-lbl', t('Paid by')), tenderBox, cashBox, qrBox, creditNote,
+      tenderAnchor, tenderBox, cashBox, qrBox, creditNote,
       h('div.pos-print', h('label.check', printChk, t('Print receipt')), paperSel),
-      saveBtn, lastBox));
+      saveBtn, lastBox),
+    bar);
 
   paintSide(); paintLast();
   queueMicrotask(focusScan);
