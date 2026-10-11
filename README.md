@@ -17,7 +17,7 @@ Builder](#renamed-from-msme-builder).*
 
 ```
 npm start          # http://localhost:8080  (and your Wi-Fi address, so staff phones can open it)
-npm test           # 127 unit tests: engine, rules, GST, memory, counter, sync + live feed, sync accounts, payments and stock across devices, Smart Collect, credit passport, CSV, translations
+npm test           # 139 unit tests: engine, rules, GST, memory, counter, sync + live feed, sync accounts, payments and stock across devices, Smart Collect, credit passport, CSV, translations
 npm run test:e2e   # 30 browser scenarios in real Chrome/Edge (needs `npm install` once for puppeteer-core)
 ```
 
@@ -566,7 +566,10 @@ tests/unit  tests/e2e       node:test unit tests; Chrome-driven end-to-end scena
 | [accounts.test.mjs](tests/unit/accounts.test.mjs) | 6 | passphrase rules, creation only with the setup code, a typo creates nothing, names ignore case, setup code persistence and settings, guessing limits per address and per workspace, changing the passphrase, workspaces made before the rules |
 | [collect.test.mjs](tests/unit/collect.test.mjs) | 10 | references, matching ladder, idempotency, counter verify, wait-for-bill, owner queue, GST template, signed webhook, forgery refusal, sandbox, secret rotation |
 | [credit.test.mjs](tests/unit/credit.test.mjs) | 8 | new shop, strong shop (exact points and limit), risky shop, GST credit notes and B2B financing, export privacy; provenance: typed or copied UTRs, amount cap, sandbox, device-made confirmations |
-| [durability.test.mjs](tests/unit/durability.test.mjs) | 2 | server process SIGKILLed right after acknowledged saves and a webhook, then restarted; injected write failures |
+| [durability.test.mjs](tests/unit/durability.test.mjs) | 6 | server process SIGKILLed right after acknowledged saves and a webhook, and inside a write (before and after the rename); a failure at each write step; a damaged file |
+| [provenance.test.mjs](tests/unit/provenance.test.mjs) | 2 | no sync request or backup file can create or overwrite the bank-confirmation snapshot |
+| [matching.test.mjs](tests/unit/matching.test.mjs) | 4 | webhook signatures, duplicates and a reused UTR, partial payments, refunds and chargebacks |
+| [upgrade.test.mjs](tests/unit/upgrade.test.mjs) | 2 | the real app code of two older versions (from git) bills while refused, then today's code syncs it once |
 | [compat.test.mjs](tests/unit/compat.test.mjs) | 3 | sync protocol policy, refusal before any data is touched, outdated device keeps and later syncs its records |
 | [cors.test.mjs](tests/unit/cors.test.mjs) | 3 | same-origin default, listed origins, explicit wildcard |
 | [perf.test.mjs](tests/unit/perf.test.mjs) | 1 | 3,000 bills / 2,000 items timings |
