@@ -371,7 +371,10 @@ import wizard lets you re-map any column that differs.
   device or payment provider gets an error, keeps the change and sends it again; the server drops what it could not save
   and never serves it. Requests that change data run one at a time. Tested by killing the server process (no warning)
   straight after ten acknowledged saves and one acknowledged bank payment, and by making the disk refuse writes.
-  Cost: every change rewrites that shop's whole file, so a very large workspace makes each sync slower.
+  Also tested: the process killed after the temporary file is written and after the rename (nothing acknowledged is
+  lost, the resend lands once, leftovers are removed at start), a failure at each write step, and a damaged file (refused
+  with "restore from a daily backup", never replaced). Cost: every change rewrites that shop's whole file, so a very
+  large workspace makes each sync slower.
 * **Only compatible app versions sync.** Each app speaks a numbered *sync protocol* that names the rules it follows
   when writing records ([protocol.js](public/js/protocol.js)): 2 = payments as a ledger, 3 = stock as movements, 4 =
   "bank-confirmed" only from the server's snapshot. The server accepts a range (now 4 to 4) and refuses anything

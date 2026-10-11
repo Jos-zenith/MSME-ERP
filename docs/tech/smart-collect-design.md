@@ -181,6 +181,13 @@ Now (server.js, `exclusive` / `commit`):
 - Daily backup copies are taken after the durable write and are best-effort (a failed copy is logged, the live file
   is already safe).
 
+Interrupted writes: a crash after the temporary file is written (before the rename) leaves the real file untouched and
+the change unacknowledged; the leftover `.tmp` file is removed at the next start. A crash after the rename (before the
+answer) leaves the change on disk but unacknowledged; the device resends it and the merge keeps one copy. A failure at
+any step (open, write, fsync, rename, directory fsync) returns 503; before the rename the file is byte-for-byte
+unchanged. A workspace file that cannot be read is refused (503, "restore from a daily backup") and never replaced,
+not even by a request to create the workspace. Test-only crash points: `VINA_CRASH_AT=after-temp:N | after-rename:N`.
+
 Tests (durability.test.mjs): the real server as a separate process, killed with SIGKILL straight after each of ten
 acknowledged syncs and after an acknowledged webhook, restarted from the same folder: everything acknowledged is
 there and no temporary files are left. And with writes made to fail: the device is told, keeps its change, the server

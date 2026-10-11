@@ -38,6 +38,8 @@ const KEEP_BACKUPS = 14;
 const SANDBOX = process.env.COLLECT_SANDBOX !== 'false';   // "Simulate a payment" in Settings; turn off in production
 
 fs.mkdirSync(path.join(DATA_DIR, 'backups'), { recursive: true });
+// a write interrupted by a crash leaves its temporary file behind; it never became the real file, so it is removed
+for (const f of fs.readdirSync(DATA_DIR)) if (f.endsWith('.tmp')) { try { fs.unlinkSync(path.join(DATA_DIR, f)); } catch { /* in use: next start */ } }
 
 // ---- setup code: who may create a workspace -----------------------------------------------------------------------------
 // Without it, anyone who can reach the server could create workspaces (and fill its disk), and a typo in a workspace
@@ -67,8 +69,14 @@ const fileFor = (ws) => path.join(DATA_DIR, `${crypto.createHash('sha256').updat
 function load(ws) {
   if (cache.has(ws)) return cache.get(ws);
   const f = fileFor(ws);
-  const doc = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null;
-  if (doc) cache.set(ws, doc);
+  if (!fs.existsSync(f)) return null;
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {
+    // never treat a damaged file as "no workspace" (that would let a new one be created over it): refuse, leave it as it is
+    console.error(`workspace file ${f} cannot be read (${e.message}); restore it from ${path.join(DATA_DIR, 'backups')}`);
+    throw Object.assign(new Error('This shop\'s data on the server cannot be read. Nothing was changed. The server owner must restore it from a daily backup.'), { status: 503 });
+  }
+  cache.set(ws, doc);
   return doc;
 }
 // ---- durability: "saved" means on disk ------------------------------------------------------------------------------------
@@ -79,7 +87,16 @@ function load(ws) {
 // the changed workspaces are dropped from memory, so the server falls back to what is on disk: it never keeps (or
 // serves) a change it could not save. API requests that touch workspaces run one at a time (`exclusive`), so a failed
 // write can never be overtaken by a later one built on top of it.
-export const testHooks = { failWrites: false };
+// Tests only: make a step of the next writes fail (failAt: 'open' | 'write' | 'fsync' | 'rename' | 'dirsync'; failWrites
+// = 'open'), or, through the environment, kill this process at a point of the Nth write (VINA_CRASH_AT=after-temp:2 or
+// after-rename:2) to check what a crash there leaves behind.
+export const testHooks = { failWrites: false, failAt: '' };
+const CRASH = /^(after-temp|after-rename):(\d+)$/.exec(process.env.VINA_CRASH_AT || '');
+let writes = 0;
+const step = (name) => {
+  if ((testHooks.failWrites && name === 'open') || testHooks.failAt === name) throw Object.assign(new Error(`injected failure at ${name}`), { code: 'EIO' });
+};
+const crashPoint = (name, n) => { if (CRASH && CRASH[1] === name && Number(CRASH[2]) === n) process.kill(process.pid, 'SIGKILL'); };
 const pending = new Map();      // ws -> doc changed by the current request
 let indexDirty = false;
 let after = [];                 // things to do once the change is safe (tell devices, close old live feeds)
@@ -87,13 +104,18 @@ function persist(ws, doc) { pending.set(ws, doc); }
 function afterCommit(fn) { after.push(fn); }
 let tmpN = 0;
 async function writeDurably(file, text) {
-  if (testHooks.failWrites) throw Object.assign(new Error('injected write failure'), { code: 'EIO' });
+  const n = ++writes;
   const tmp = `${file}.${process.pid}.${++tmpN}.tmp`;
   try {
+    step('open');
     const fh = await fsp.open(tmp, 'w');
-    try { await fh.writeFile(text); await fh.sync(); } finally { await fh.close(); }
+    try { step('write'); await fh.writeFile(text); step('fsync'); await fh.sync(); } finally { await fh.close(); }
+    crashPoint('after-temp', n);
+    step('rename');
     await fsp.rename(tmp, file);
   } catch (e) { await fsp.unlink(tmp).catch(() => {}); throw e; }
+  crashPoint('after-rename', n);
+  step('dirsync');
   await syncDir(path.dirname(file));
 }
 /** Make the rename itself durable. Windows cannot open a directory for this; NTFS journals the rename instead. */
