@@ -462,6 +462,18 @@ Server environment variables:
 | `TRUST_PROXY` | `false` | `true` behind a reverse proxy that does not pass the original `Host`: the `X-Forwarded-Host` it sends then also counts as this server |
 | `COLLECT_SANDBOX` | `true` | Allows *Simulate a payment*. **Set `false` in production** |
 
+**Check a deployment from the outside** (read-only; it only sends requests that are refused):
+
+```
+node scripts/check-deploy.mjs --sync https://your-sync-server --app https://your-app.vercel.app
+```
+
+It checks that the server answers over https, that the app's origin passes the browser preflight and reaches the
+passphrase check, that another web site and a Vercel-preview-style address are refused, that apps without a sync
+protocol get 426, that the payment webhook path is reachable without a browser origin, and whether the sandbox
+simulator is still on. If the app and the sync server are on different origins,  must list the app's exact
+origin; preview deployments need their own entry (never a pattern such as , which would include anyone's app).
+
 App settings that matter for payments: *Settings → Your business → UPI ID* (the merchant VPA for the QR), *Settings
 → Smart Collect* (on/off, sandbox), *Settings → Sync* (required for Smart Collect).
 
