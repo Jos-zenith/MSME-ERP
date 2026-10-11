@@ -230,6 +230,16 @@ export async function reconcileAll(store, { now = Date.now(), holdHours = 12 } =
   const queue = store.records(COLLECT_TABLE).filter((r) => r.data.status === 'new' || r.data.status === 'review')
     .sort((a, b) => String(a.data.at || '').localeCompare(String(b.data.at || '')));
   for (const ev of queue) {
+    if (isReversal(ev)) {
+      // money going back is the owner's call, with the bill it was paid on as the suggestion
+      review++;
+      const e = { ...ev.data, ...(ev.origin === 'server' ? ev.bank : {}) };
+      const suggestion = reversalSuggestion(store, e);
+      if (ev.data.status !== 'review' || !sameSuggestion(ev.data.suggestion, suggestion)) {
+        store.putSystemRecord(COLLECT_TABLE, ev.id, { ...ev.data, status: 'review', suggestion, reason: suggestion ? 'reversal' : 'reversal_unknown_payment' });
+      }
+      continue;
+    }
     const bills = openBills(store, cfg);
     let m = matchPayment(ev.data, bills, { upiMode: cfg.upiMode });
     if (m.kind === 'wait') {
@@ -283,14 +293,71 @@ export function unverifiedUpi(store, { graceMinutes = 15, now = new Date() } = {
  */
 export function bankConfirmations(store) {
   const out = new Map();
+  const back = reversedByUtr(store);
   for (const r of store.records(COLLECT_TABLE)) {
     // the bank's facts come only from the snapshot the server attached (`bank`), never from `data`, which devices edit
     const b = r.origin === 'server' ? r.bank : null;
     const d = r.data || {};
-    if (!b?.utr || d.status !== 'matched') continue;
-    out.set(String(b.utr), { amount: toNum(b.amount), bills: new Set((d.allocations || []).map((a) => a.id)), sandbox: b.source !== 'provider' });
+    if (!b?.utr || b.kind === 'reversal' || d.status !== 'matched') continue;
+    // a refund or chargeback stops counting at once, whether or not the owner has recorded it on the bill yet
+    const amount = Math.max(0, r2(toNum(b.amount) - (back.get(String(b.utr)) || 0)));
+    out.set(String(b.utr), { amount, bills: new Set((d.allocations || []).map((a) => a.id)), sandbox: b.source !== 'provider' });
   }
   return out;
+}
+
+// ---- refunds and chargebacks: the bank took money back ------------------------------------------------------------------
+const isReversal = (r) => (r.origin === 'server' ? r.bank?.kind : r.data?.kind) === 'reversal';
+/** UTR of a payment -> how much of it the bank has reversed (server-delivered reversal events only). */
+function reversedByUtr(store) {
+  const out = new Map();
+  for (const r of store.records(COLLECT_TABLE)) {
+    if (r.origin !== 'server' || r.bank?.kind !== 'reversal') continue;
+    out.set(String(r.bank.of), r2((out.get(String(r.bank.of)) || 0) + toNum(r.bank.amount)));
+  }
+  return out;
+}
+/** The reference a reversal row carries on the bill (a chargeback can reuse the original UTR, which a payment row holds). */
+export const reversalRef = (e) => (e.utr === e.of ? `${e.utr}-REV` : e.utr);
+/** Where a reversal should be recorded: the bills its original payment was applied to, newest allocation first. */
+function reversalSuggestion(store, e) {
+  const orig = store.records(COLLECT_TABLE).find((r) => !isReversal(r) && String(r.data.utr) === String(e.of) && r.data.status === 'matched');
+  if (!orig) return null;
+  let left = toNum(e.amount);
+  const allocations = [];
+  for (const a of [...(orig.data.allocations || [])].reverse()) {
+    if (left <= EPS) break;
+    const take = r2(Math.min(left, toNum(a.amount)));
+    allocations.push({ id: a.id, amount: -take });
+    left = r2(left - take);
+  }
+  return allocations.length ? { kind: 'reversal', allocations, unapplied: left > EPS ? left : 0 } : null;
+}
+/**
+ * Owner confirms a refund or chargeback: a negative payment row (append-only, so the original payment stays in
+ * history) on the bill(s), carrying the reversal's reference. Recording it twice adds nothing.
+ */
+export async function applyReversal(store, evtId, { allocations, by = 'owner' } = {}) {
+  const cfg = collectSetup(store.app);
+  const ev = store.getRecord(COLLECT_TABLE, evtId);
+  if (!cfg || !ev || !isReversal(ev)) return { ok: false };
+  const e = { ...ev.data, ...(ev.origin === 'server' ? ev.bank : {}) };
+  const ref = reversalRef(e);
+  const plan = allocations || ev.data.suggestion?.allocations || reversalSuggestion(store, e)?.allocations || [];
+  const applied = [];
+  for (const a of plan) {
+    const rec = store.getRecord(cfg.table.id, a.id);
+    if (!rec) continue;
+    const rows = rec.data[cfg.pay.id] || [];
+    if (cfg.ref && rows.some((r) => r[cfg.ref.id] === ref)) { applied.push({ id: a.id, amount: toNum(a.amount) }); continue; }
+    const row = { ...newRow(cfg.pay), [cfg.amount.id]: -Math.abs(toNum(a.amount)), [cfg.mode.id]: cfg.upiMode, _src: 'bank' };
+    if (cfg.date) row[cfg.date.id] = String(e.at || '').slice(0, 10) || todayStr();
+    if (cfg.ref) row[cfg.ref.id] = ref;
+    const res = await store.patchRecord(cfg.table.id, rec.id, { [cfg.pay.id]: [...rows, row] });
+    if (res.ok) applied.push({ id: rec.id, amount: row[cfg.amount.id] });
+  }
+  store.putSystemRecord(COLLECT_TABLE, evtId, { ...ev.data, status: 'matched', how: 'reversal', by, matchedAt: store.now(), allocations: applied, suggestion: null });
+  return { ok: true, applied };
 }
 
 /** Smart Collect numbers for the home screen and the credit passport. */

@@ -354,8 +354,12 @@ const pick = (o, keys) => {
   return undefined;
 };
 const OK_STATUS = new Set(['SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'PAID', 'CREDITED', 'CREDIT', 'S']);
+// money that went back: never "ignored" (the provider would not send it again), kept as a reversal of the original UTR
+const REVERSAL_STATUS = new Set(['REFUNDED', 'REFUND', 'REFUND_SUCCESS', 'REVERSED', 'REVERSAL', 'CHARGEBACK', 'CHARGED_BACK']);
 /**
- * Provider payload -> { ok, utr, amount, ref, vpa, name, phone, at }. Tolerant of common field names (utr / rrn /
+ * Provider payload -> { ok, kind, of, utr, amount, ref, vpa, name, phone, at }. kind: 'payment', or 'reversal' (a refund or
+ * chargeback; `of` is the UTR of the payment it takes back: original_utr / original_rrn / parent_utr..., or its own UTR
+ * when the provider reports the reversal against the same transaction). Tolerant of common field names (utr / rrn /
  * bank_reference_number, reference_id / tr, payer_vpa ...), flat or under `data`. Map a provider's exact contract
  * here when integrating; nothing else in the system depends on its shape.
  */
@@ -363,9 +367,12 @@ export function normalizeEvent(body) {
   const o = body && typeof body === 'object' ? (body.data && typeof body.data === 'object' ? { ...body, ...body.data } : body) : {};
   const status = String(pick(o, ['status', 'transaction_status', 'txn_status', 'payment_status']) ?? 'SUCCESS').toUpperCase();
   const at = new Date(pick(o, ['timestamp', 'transaction_time', 'txn_time', 'at']) || Date.now());
+  const kind = OK_STATUS.has(status) ? 'payment' : REVERSAL_STATUS.has(status) ? 'reversal' : null;
+  const utr = String(pick(o, ['utr', 'rrn', 'bank_reference_number', 'bank_ref', 'npci_transaction_id']) ?? '').trim();
   return {
-    ok: OK_STATUS.has(status), status,
-    utr: String(pick(o, ['utr', 'rrn', 'bank_reference_number', 'bank_ref', 'npci_transaction_id']) ?? '').trim(),
+    ok: !!kind, status, kind: kind || '',
+    of: kind === 'reversal' ? String(pick(o, ['original_utr', 'original_rrn', 'parent_utr', 'original_bank_reference_number', 'refund_of']) ?? utr).trim().slice(0, 40) : '',
+    utr,
     amount: Math.round(Number(pick(o, ['amount', 'transaction_amount', 'txn_amount'])) * 100) / 100,
     ref: String(pick(o, ['reference', 'reference_id', 'tr', 'merchant_reference', 'merchant_transaction_id']) ?? '').trim().toUpperCase().slice(0, 35),
     vpa: String(pick(o, ['payer_vpa', 'payer_upi', 'payer_address', 'vpa']) ?? '').trim().slice(0, 100),
@@ -374,8 +381,9 @@ export function normalizeEvent(body) {
     at: Number.isNaN(at.getTime()) ? new Date().toISOString() : at.toISOString(),
   };
 }
-const BANK_FIELDS = ['utr', 'amount', 'ref', 'vpa', 'name', 'phone', 'at', 'source'];
-const validEvent = (e) => /^[A-Za-z0-9-]{6,40}$/.test(e.utr) && Number.isFinite(e.amount) && e.amount > 0 && e.amount < 1e8;
+const BANK_FIELDS = ['utr', 'amount', 'ref', 'vpa', 'name', 'phone', 'at', 'source', 'kind', 'of'];
+const validEvent = (e) => /^[A-Za-z0-9-]{6,40}$/.test(e.utr) && Number.isFinite(e.amount) && e.amount > 0 && e.amount < 1e8
+  && (e.kind !== 'reversal' || /^[A-Za-z0-9_-]{4,40}$/.test(e.of));
 
 /**
  * Payment confirmations exist on this server only because the signed webhook (or, in sandbox, the simulator) created
@@ -389,8 +397,15 @@ const outgoing = (r) => (r.table === '_collect'
   : r);
 
 function ingest(doc, e, source) {
-  const id = `col_${crypto.createHash('sha256').update(e.utr).digest('hex').slice(0, 20)}`;
-  if (doc.records[id]) return { status: 200, json: { ok: true, duplicate: true, id } };
+  // a payment is identified by its UTR; a reversal by its own UTR and the one it reverses (a chargeback may reuse it)
+  const key = e.kind === 'reversal' ? `reversal|${e.utr}|${e.of}` : e.utr;
+  const id = `col_${crypto.createHash('sha256').update(key).digest('hex').slice(0, 20)}`;
+  const had = doc.records[id];
+  if (had) {
+    // the same event again: nothing to do. The same UTR with another amount is not a repeat: refuse, so someone looks
+    if (Math.abs(Number(had.data.amount) - e.amount) > 0.004) return { status: 409, error: 'This UTR is already recorded with a different amount' };
+    return { status: 200, json: { ok: true, duplicate: true, id } };
+  }
   const now = new Date().toISOString();
   const { ok, status, ...data } = e;
   doc.records[id] = { id, table: '_collect', origin: 'server', data: { ...data, status: 'new', source }, created: now, updated: now, deleted: false, by: null, _seq: ++doc.seq };
@@ -426,7 +441,7 @@ function handleCollectHook(id, raw, headers, ip) {
   let body;
   try { body = JSON.parse(raw.toString('utf8')); } catch { return { status: 400, error: 'Bad JSON' }; }
   const e = normalizeEvent(body);
-  if (!e.ok) return { status: 200, json: { ok: true, ignored: e.status } };   // failed / pending payments are not money
+  if (!e.ok) return { status: 200, json: { ok: true, ignored: e.status } };   // failed / pending: no money moved
   if (!validEvent(e)) return { status: 400, error: 'Missing UTR or amount' };
   return ingest(doc, e, 'provider');
 }

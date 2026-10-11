@@ -6,7 +6,7 @@ import { icon } from '../ui/icons.js';
 import { emptyState, pill } from '../ui/bits.js';
 import { fmtMoney, fmtDate } from '../schema.js';
 import { toNum } from '../formula.js';
-import { collectOn, collectSetup, openBills, paymentsToReview, unverifiedUpi, settleManually, ignorePayment, COLLECT_TABLE } from '../collect.js';
+import { collectOn, collectSetup, openBills, paymentsToReview, unverifiedUpi, settleManually, ignorePayment, applyReversal, COLLECT_TABLE } from '../collect.js';
 
 /** Count for the tab badge and the home screen. */
 export const paymentsAttention = (store) => paymentsToReview(store).length + unverifiedUpi(store).length;
@@ -38,6 +38,7 @@ export function paymentsPanel(ctx) {
   for (const ev of review) {
     const d = ev.data;
     const s = d.suggestion;
+    if (d.kind === 'reversal') { out.append(reversalCard(store, cfg, ev, owner, billNo)); continue; }
     out.append(h('div.card.msg.pay-card',
       h('div.msg-head', h('span.ic', icon('wallet', { size: 16 })), h('b', fmtMoney(d.amount)), h('span', payer(d)), h('span.spacer'), h('time', when(d.at))),
       h('div.hint', `UTR ${d.utr}${d.source === 'sandbox' ? ` · ${t('sandbox')}` : ''}`),
@@ -69,13 +70,28 @@ export function paymentsPanel(ctx) {
     out.append(h('h3.pay-h', t('Recently confirmed')),
       h('ul.history', done.map((ev) => {
         const d = ev.data;
-        const tag = d.status === 'ignored' ? pill(t('Not a sale'), 'muted') : d.by === 'auto' ? pill(d.how === 'verify' ? t('Verified') : t('Automatic'), 'good') : pill(t('By hand'), 'info');
+        const tag = d.kind === 'reversal' ? pill(d.status === 'ignored' ? t('Refund dismissed') : t('Refund recorded'), 'warn') : d.status === 'ignored' ? pill(t('Not a sale'), 'muted') : d.by === 'auto' ? pill(d.how === 'verify' ? t('Verified') : t('Automatic'), 'good') : pill(t('By hand'), 'info');
         return h('li', h('b', fmtMoney(d.amount)), ' ', tag, ' ',
           (d.allocations || []).map((a, i) => [i ? ', ' : '', h('a.link', { href: `#/t/${cfg.table.id}/${a.id}` }, store.getRecord(cfg.table.id, a.id)?.data.number || '—')]),
           h('span.muted', ` · UTR ${d.utr} · ${when(d.matchedAt || d.at)}`));
       })));
   }
   return out;
+}
+
+/** The bank took money back (a refund or chargeback): the owner records it on the bill it was paid on. */
+function reversalCard(store, cfg, ev, owner, billNo) {
+  const d = ev.data, s = d.suggestion;
+  return h('div.card.msg.pay-card.reversal-card',
+    h('div.msg-head', h('span.ic', icon('alert', { size: 16 })), h('b', `− ${fmtMoney(d.amount)}`), h('span', t('Refunded or reversed by the bank')), h('span.spacer'), h('time', when(d.at))),
+    h('div.hint', `${t('Of payment')} UTR ${d.of}${d.utr !== d.of ? ` · ${t('reversal')} ${d.utr}` : ''}`),
+    s ? h('p', `${t('It was paid on')}: `, s.allocations.map((a, i) => [i ? ', ' : '', h('a.link', { href: `#/t/${cfg.table.id}/${a.id}` }, billNo(a.id)), ` ${fmtMoney(-a.amount)}`]),
+      `. ${t('Recording it puts that amount back as owed on the bill. It already no longer counts as bank-confirmed.')}`)
+      : h('p', t('No payment with that UTR was recorded here.')),
+    owner ? h('div.msg-actions',
+      s ? h('button.btn.primary', { onclick: async () => { await applyReversal(store, ev.id); toast(t('Refund recorded on the bill.')); } }, icon('check', { size: 15 }), t('Record on the bill')) : null,
+      h('button.btn.ghost', { onclick: () => { ignorePayment(store, ev.id, 'reversal dismissed'); toast(t('Dismissed.')); } }, t('Dismiss')))
+      : h('p.hint', t('Only the owner can match payments.')));
 }
 
 /** Owner puts a payment against one open bill (the rest, if any, stays as an advance). */

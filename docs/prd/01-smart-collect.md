@@ -42,7 +42,7 @@ The app already had a "UPI received" button. It records what the cashier *believ
 
 **Non-goals (v1)**
 - Holding or routing funds. Money goes from payer to the shop's account at the provider, and we only receive notices.
-- Refunds, chargebacks, UPI Autopay mandates (later PRD).
+- UPI Autopay mandates (later PRD). (Refunds and chargebacks: R15, built.)
 - Card and net-banking reconciliation (the same design applies; the next rail after UPI).
 
 ## 4. Success metrics
@@ -109,7 +109,7 @@ Turn on, see the webhook URL and signing secret (copy and rotate), toggle sandbo
 | R12 | Reconciliation sweep: fetch payments by reference from the provider for bills marked UPI with no event after N minutes (covers lost webhooks) | P1 | Next |
 | R13 | Per-shop provider VPA onboarding inside the app (KYC handoff to the provider) | P1 | Next |
 | R14 | Timestamped signature header to bound replay windows (replay is already harmless because of R3) | P2 | Next |
-| R15 | Refunds: a negative event reverses the row with that UTR and flags the bill | P2 | Later |
+| R15 | Refunds and chargebacks: the webhook's REFUNDED / REVERSED / CHARGEBACK becomes a reversal event of the original UTR (never "ignored"); bank-confirmed money falls at once; the owner records it on the bill as a negative row (once) | P0 | Built 2026-10-11 |
 
 ## 7. Key decisions
 

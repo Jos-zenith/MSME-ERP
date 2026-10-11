@@ -565,4 +565,17 @@ export default {
   "Update now": "अभी अपडेट करें",
   "Update to keep syncing": "सिंक जारी रखने के लिए अपडेट करें",
   "Update to keep syncing. Everything on this device is kept and will sync after the update.": "सिंक जारी रखने के लिए अपडेट करें। इस डिवाइस पर सब कुछ सुरक्षित है और अपडेट के बाद सिंक हो जाएगा।",
+  // Refunds and reversals (first draft: please have a native speaker review)
+  "Dismiss": "हटाएँ",
+  "Dismissed.": "हटा दिया।",
+  "It was paid on": "यह भुगतान इस बिल पर था",
+  "No payment with that UTR was recorded here.": "इस UTR का कोई भुगतान यहाँ दर्ज नहीं है।",
+  "Of payment": "भुगतान का",
+  "Record on the bill": "बिल पर दर्ज करें",
+  "Recording it puts that amount back as owed on the bill. It already no longer counts as bank-confirmed.": "दर्ज करने पर यह रकम बिल पर फिर से बकाया दिखेगी। यह पहले से ही बैंक से पक्की गिनती में नहीं है।",
+  "Refund dismissed": "रिफ़ंड हटाया गया",
+  "Refund recorded": "रिफ़ंड दर्ज हुआ",
+  "Refund recorded on the bill.": "रिफ़ंड बिल पर दर्ज हुआ।",
+  "Refunded or reversed by the bank": "बैंक ने लौटाया या वापस लिया",
+  "reversal": "वापसी",
 };

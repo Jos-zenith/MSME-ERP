@@ -601,7 +601,8 @@ The product was called *MSME Builder*; it is now **Vina**. Existing shops keep w
   webhook path. Going live needs a UPI collections account (merchant VPA), the provider's payload and signature mapped
   in `normalizeEvent` / `handleCollectHook`, and the sync server reachable over HTTPS with `COLLECT_SANDBOX=false`.
   Whether the provider returns the QR's `tr` reference must be confirmed in its sandbox (PRD-01, open question 1).
-  Refunds and a reconciliation sweep for lost webhooks are not built yet.
+  Refunds and chargebacks are recorded (the owner books them on the bill; bank-confirmed money falls at once). A
+  reconciliation sweep for lost webhooks is not built yet.
 * **The Credit Passport is advisory.** It reads only this app's data. It is not a bureau score, no lender is connected,
   and the export is not yet signed. Its screen is in English for now.
 * **WhatsApp/SMS/email are one tap, not fully automatic.** They open the user's own WhatsApp/SMS/email app with the
@@ -629,7 +630,7 @@ The product was called *MSME Builder*; it is now **Vina**. Existing shops keep w
 | Next | Why | Doc |
 |---|---|---|
 | Provider sandbox integration (real webhooks, `tr` round-trip, signature scheme) | Turns Smart Collect from simulated to live | [PRD-01](docs/prd/01-smart-collect.md) |
-| Reconciliation sweep for lost webhooks; refunds | Closes the remaining gaps in collection accuracy | [PRD-01](docs/prd/01-smart-collect.md) |
+| Reconciliation sweep for lost webhooks | Closes the remaining gap in collection accuracy | [PRD-01](docs/prd/01-smart-collect.md) |
 | Hindi / Tamil / Telugu credit passport; Section 43B(h) reminders for Udyam-registered manufacturers and service providers | Reach and a stronger collection lever | [PRD-02](docs/prd/02-credit-passport.md) |
 | Account Aggregator-verified inputs, signed export, lender handoff (ULI / OCEN-style) | From advice to an actual loan | [PRD-02](docs/prd/02-credit-passport.md) |
 | Verified Payouts: penny-drop + GSTIN status, pay suppliers from the purchase bill | Money out, with fraud and ITC protection | [PRD-03](docs/prd/03-verified-payouts.md) |

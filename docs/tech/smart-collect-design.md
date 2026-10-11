@@ -212,7 +212,13 @@ workspace document on the server and is never synced to devices.
 - Financial records across devices: see the section above for what is guaranteed and what is still open (one bill
   changed twice, stock history size, workflows on merged-in changes, devices on older versions).
 - One provider per workspace.
-- Bank refunds are not handled yet (PRD-01, R15): a refund event should add a negative ledger row. Manual corrections are reversals (above).
+- Refunds and chargebacks (fixed 2026-10-11; they used to be answered "200 ignored" and lost, since the provider does
+  not resend): statuses REFUNDED / REFUND / REVERSED / CHARGEBACK... become a `reversal` event with `of` = the
+  original UTR (`original_utr`, `original_rrn`, `parent_utr`..., or its own UTR when reported against the same
+  transaction), idempotent by (UTR, of). `bankConfirmations` subtracts reversed amounts at once. Reversals are never
+  applied by guesswork: they wait in *Payments to match* with the original's bills as the suggestion, and *Record on
+  the bill* adds one negative row (reference `UTR`, or `UTR-REV` for a same-UTR chargeback). A UTR repeated with a
+  different amount is refused (409). Tests: matching.test.mjs. Provider field names must be confirmed at integration.
 - A bill started at the counter and finished on *Full form* gets a new id, so its payment is matched by phone or
   amount suggestion rather than by reference.
 - The unverified-UPI check uses record `updated` time as the grace anchor, so editing a bill restarts its 15 minutes.
