@@ -67,7 +67,7 @@ Only 1, 2, 3 (fully allocated) and 5 apply automatically.
 | A retried webhook changes nothing | Event id derived from UTR; existing id → `duplicate: true` | `collect server: signed webhook …` |
 | The same bank payment is never counted twice | `applyMatch` skips bills that already have the UTR; across devices, the ledger merge keeps one row per UTR (see below) | `… never counts twice`; `UPI across devices …` in ledger.test.mjs |
 | Unsigned or mis-signed calls are rejected | HMAC-SHA256 over the raw body, constant-time compare; failures rate-limited per IP | `… bad signatures` |
-| Devices cannot forge or alter bank facts | `/api/sync` drops device-created `_collect` records and restores bank fields from the server copy | `… forgeries change nothing` |
+| Devices cannot forge or alter bank facts | `/api/sync` drops device-created `_collect` records, restores bank fields from the server copy and sends that copy back; every copy the server sends carries `origin: 'server'` and a `bank` snapshot that devices never write, and only that snapshot can make a payment "bank-confirmed" (credit.js) | `… forgeries change nothing`; `provenance: …` in credit.test.mjs |
 | Failed or pending payments are not money | Only success statuses are stored | same test (`FAILED` → ignored) |
 | Payments never go to the wrong bill by guesswork | Ladder above; `wait` step | `… never pays an older bill by guesswork` |
 | Rotating the secret retires the old URL | New hook id + secret; index updated | `… rotating the secret` |

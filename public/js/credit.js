@@ -9,7 +9,7 @@
 // that Indian banks apply to working-capital limits for micro and small businesses, scaled down by readiness.
 // Pure: no DOM, no storage, no translations (the screen words the codes), so it is tested like the GST engine.
 import { toNum, todayStr, addDays, daysBetween, round } from './formula.js';
-import { collectSetup } from './collect.js';
+import { collectSetup, bankConfirmations } from './collect.js';
 import { docOf, validateGstin } from '../gst/js/gst.js';
 
 export const PASSPORT_FORMAT = 'vina-credit-passport';
@@ -33,19 +33,34 @@ export function creditPassport(store, { today = todayStr() } = {}) {
   if (!cfg) return null;
   const partyTable = cfg.party ? store.table(cfg.party.ref) : null;
   const partyGstin = partyTable?.fields.find((f) => f.id === 'gstin');
-  const bills = store.records(cfg.table.id).map((r) => r.data).filter((d) => !d.cancelled && d.date)
-    .map((d) => ({ d, sign: d.doc_type ? docOf(d.doc_type).sign : 1, payable: d.doc_type ? docOf(d.doc_type).payable : true }))
+  const bills = store.records(cfg.table.id).filter((r) => !r.data.cancelled && r.data.date)
+    .sort((x, y) => x.data.date.localeCompare(y.data.date) || (x.id < y.id ? -1 : 1))
+    .map((r) => ({ id: r.id, d: r.data, sign: r.data.doc_type ? docOf(r.data.doc_type).sign : 1, payable: r.data.doc_type ? docOf(r.data.doc_type).payable : true }))
     .filter((b) => b.sign !== 0);
+  // provenance of every digital payment: bank-confirmed (a server-delivered confirmation for this bill, never more than
+  // the bank reported for that UTR), reference supplied (typed, copied, simulated, or above the confirmed amount), none
+  const banks = bankConfirmations(store);
+  const left = new Map([...banks].map(([utr, b]) => [utr, b.amount]));
+  const provenance = (billId, row, amt) => {
+    const ref = cfg.ref ? String(row[cfg.ref.id] || '').trim() : '';
+    if (!ref) return { confirmed: 0, simulated: 0, referenced: 0 };
+    const b = banks.get(ref);
+    if (!b || !b.bills.has(billId)) return { confirmed: 0, simulated: 0, referenced: amt };
+    const take = Math.min(amt, left.get(ref));
+    left.set(ref, left.get(ref) - take);
+    return b.sandbox ? { confirmed: 0, simulated: take, referenced: amt } : { confirmed: take, simulated: 0, referenced: amt - take };
+  };
   const thisMonth = monthOf(today);
   const from90 = addDays(today, -90);
 
   // ---- monthly sales and collections ----------------------------------------------------------------------------------
   const months = new Map();
-  const m = (k) => { if (!months.has(k)) months.set(k, { month: k, sales: 0, collected: 0, digital: 0, verified: 0 }); return months.get(k); };
+  const blankMonth = (k) => ({ month: k, sales: 0, collected: 0, digital: 0, referenced: 0, confirmed: 0, simulated: 0 });
+  const m = (k) => { if (!months.has(k)) months.set(k, blankMonth(k)); return months.get(k); };
   let first = '';
-  let coll90 = 0, digital90 = 0, verified90 = 0, billed90 = 0;
+  let coll90 = 0, digital90 = 0, referenced90 = 0, confirmed90 = 0, simulated90 = 0, billed90 = 0;
   const partySales = new Map();
-  for (const { d, sign } of bills) {
+  for (const { id, d, sign } of bills) {
     const total = sign * toNum(d.total);
     if (!first || d.date < first) first = d.date;
     m(monthOf(d.date)).sales += total;
@@ -58,20 +73,22 @@ export function creditPassport(store, { today = todayStr() } = {}) {
       const amt = toNum(row[cfg.amount.id]);
       const day = (cfg.date && row[cfg.date.id]) || d.date;
       const isDigital = !/cash/i.test(row[cfg.mode.id] || '');
-      const isVerified = isDigital && !!(cfg.ref && String(row[cfg.ref.id] || '').trim());
+      const pv = isDigital ? provenance(id, row, amt) : { confirmed: 0, simulated: 0, referenced: 0 };
       const bucket = m(monthOf(day));
       bucket.collected += amt;
-      if (isDigital) bucket.digital += amt;
-      if (isVerified) bucket.verified += amt;
-      if (day >= from90 && day <= today) { coll90 += amt; if (isDigital) digital90 += amt; if (isVerified) verified90 += amt; }
+      if (isDigital) { bucket.digital += amt; bucket.referenced += pv.referenced; bucket.confirmed += pv.confirmed; bucket.simulated += pv.simulated; }
+      if (day >= from90 && day <= today) {
+        coll90 += amt;
+        if (isDigital) { digital90 += amt; referenced90 += pv.referenced; confirmed90 += pv.confirmed; simulated90 += pv.simulated; }
+      }
     }
   }
 
   // full months only (the current one is still running), from the first month with a sale, at most the last 12
   const full = [];
-  if (first) for (let k = prevMonth(thisMonth); k >= monthOf(first) && full.length < 12; k = prevMonth(k)) full.unshift(months.get(k) || { month: k, sales: 0, collected: 0, digital: 0, verified: 0 });
-  const series = [...full, months.get(thisMonth) || { month: thisMonth, sales: 0, collected: 0, digital: 0, verified: 0 }]
-    .map((x) => ({ ...x, sales: r2(x.sales), collected: r2(x.collected), digital: r2(x.digital), verified: r2(x.verified) }));
+  if (first) for (let k = prevMonth(thisMonth); k >= monthOf(first) && full.length < 12; k = prevMonth(k)) full.unshift(months.get(k) || blankMonth(k));
+  const series = [...full, months.get(thisMonth) || blankMonth(thisMonth)]
+    .map((x) => Object.fromEntries(Object.entries(x).map(([k, v]) => [k, typeof v === 'number' ? r2(v) : v])));
   const fullSales = full.map((x) => x.sales);
   const last3 = fullSales.slice(-3);
   const dayOfMonth = Number(today.slice(8, 10)) || 1;
@@ -127,7 +144,9 @@ export function creditPassport(store, { today = todayStr() } = {}) {
     limit: { annual, ceiling, indicative, share: NAYAK_SHARE, factor, projected: !last3.length },
     metrics: {
       historyMonths, firstSale: first, runRate: r2(runRate), annual, growth, cv, billed90: r2(billed90),
-      collected90: r2(coll90), digitalShare, verifiedShare: digital90 > 0 ? verified90 / digital90 : null,
+      collected90: r2(coll90), digitalShare,
+      digital90: r2(digital90), referenced90: r2(referenced90), bankConfirmed90: r2(confirmed90), simulated90: r2(simulated90),
+      referenceShare: digital90 > 0 ? referenced90 / digital90 : null, bankConfirmedShare: digital90 > 0 ? confirmed90 / digital90 : null,
       receivables: r2(ar), overdue: r2(overdue), overdueShare, dso: dso === null ? null : round(dso, 1), topShare, customers90: partySales.size, gstinOk,
     },
     invoiceFinance: { amount: r2(b2bOpen), count: b2bCount },
@@ -152,6 +171,9 @@ export function passportExport(p, business = {}, { purpose = 'Working-capital lo
     limit: p.limit,
     invoiceFinance: p.invoiceFinance,
     monthly: p.monthly,
-    basis: 'Computed on the business’s own device from its billing records. Bank-confirmed UPI receipts (with UTR) are counted in metrics.verifiedShare. Indicative only: not a credit score or a loan offer.',
+    basis: 'Computed on the business’s own device from its billing records. Digital payments are split by provenance: '
+      + 'bank-confirmed (bankConfirmedShare) means only payments whose confirmation came from the payment provider through the sync server’s signed webhook and was applied to that bill, never more than the amount the bank reported; '
+      + 'reference only (referenceShare) means payments that carry a reference (UTR) nobody verified: typed by hand, copied, simulated in the sandbox, or above the confirmed amount. '
+      + 'Indicative only: not a credit score or a loan offer.',
   };
 }

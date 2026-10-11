@@ -273,6 +273,26 @@ export function unverifiedUpi(store, { graceMinutes = 15, now = new Date() } = {
   return out.sort((a, b) => b.date.localeCompare(a.date));
 }
 
+/**
+ * Bank confirmations this device may rely on, by UTR: { amount, bills, sandbox }.
+ * Only records the sync server sent (`origin: 'server'`), and only the bank's facts the server attached to them
+ * (`bank`: UTR, amount, source). The server creates these records solely from its signed webhook and restores the bank's
+ * fields if a device changes them. A record this device wrote itself, or any flag or field it edited, never counts. Only events filed against bills (status matched); `bills` is where the owner or the matcher
+ * put the money, so a real UTR typed onto a different bill does not count for that bill. `sandbox` marks simulated
+ * payments, which are never bank-confirmed.
+ */
+export function bankConfirmations(store) {
+  const out = new Map();
+  for (const r of store.records(COLLECT_TABLE)) {
+    // the bank's facts come only from the snapshot the server attached (`bank`), never from `data`, which devices edit
+    const b = r.origin === 'server' ? r.bank : null;
+    const d = r.data || {};
+    if (!b?.utr || d.status !== 'matched') continue;
+    out.set(String(b.utr), { amount: toNum(b.amount), bills: new Set((d.allocations || []).map((a) => a.id)), sandbox: b.source !== 'provider' });
+  }
+  return out;
+}
+
 /** Smart Collect numbers for the home screen and the credit passport. */
 export function collectStats(store, { days = 30, today = todayStr() } = {}) {
   const from = new Date(Date.parse(`${today}T00:00:00Z`) - days * 86400000).toISOString().slice(0, 10);

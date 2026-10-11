@@ -187,8 +187,9 @@ micro and small business working capital) × 1.0 / 0.75 / 0.5 / 0.25 by band, ro
 turnover = average of the last 3 full months × 12.
 
 **Also on the screen:** the three changes that would add the most points (with the points each could add), sales by
-month (chart or table), money received per month with digital and **bank-confirmed** shares (Smart Collect receipts
-with a UTR), and unpaid bills to GST-registered buyers under 90 days late that could be discounted (for example on TReDS).
+month (chart or table), money received per month split by provenance (digital, *reference only*, and **bank-confirmed**:
+only payments the provider confirmed through the server's signed webhook, applied to that bill, up to the amount the bank
+reported; a typed or copied UTR or a sandbox payment never counts), and unpaid bills to GST-registered buyers under 90 days late that could be discounted (for example on TReDS).
 
 **Download passport** writes `vina-credit-passport-YYYY-MM-DD.json` with score, factors, metrics, limit, monthly
 series and a **consent block** (purpose, valid until, what it contains). It never includes customer names, phone

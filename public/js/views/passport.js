@@ -91,10 +91,10 @@ export function passportView(ctx) {
           chartWithTable({ fmt: 'money', isDate: true, series: p.monthly.map((x) => ({ key: x.month, label: monthLabel(x.month), value: Math.max(0, x.sales) })) }, t('Sales by month'))),
         h('section.card', h('h3', t('Money received')),
           h('div.table-wrap', h('table.data.compact',
-            h('thead', h('tr', h('th', t('Month')), h('th.num', t('Received')), h('th.num', t('Digital')), h('th.num', t('Bank-confirmed')))),
+            h('thead', h('tr', h('th', t('Month')), h('th.num', t('Received')), h('th.num', t('Digital')), h('th.num', t('Reference only')), h('th.num', t('Bank-confirmed')))),
             h('tbody', p.monthly.slice(-6).map((x) => h('tr', h('td', monthLabel(x.month)), h('td.num', fmtMoney(x.collected)),
-              h('td.num', x.collected ? pct(x.digital / x.collected) : '—'), h('td.num', x.digital ? pct(x.verified / x.digital) : '—')))))),
-          h('p.hint', t('Bank-confirmed: UPI payments that arrived with the bank’s UTR through Smart Collect. These are the strongest evidence for a lender.')))),
+              h('td.num', x.collected ? pct(x.digital / x.collected) : '—'), h('td.num', x.digital ? pct(x.referenced / x.digital) : '—'), h('td.num', x.digital ? pct(x.confirmed / x.digital) : '—')))))),
+          h('p.hint', t('Bank-confirmed: the payment provider told the sync server (signed), and it was applied to that bill. Reference only: a UTR was typed or copied, or the payment was a sandbox test; nobody verified it. Only bank-confirmed payments are evidence for a lender.')))),
 
       h('section.card.pp-share', h('h3', t('Sharing it')),
         h('p', t('The download holds monthly totals and ratios only: no customer names, phone numbers or bills. It says what it is for and until when. Share it only with a lender you chose.')),

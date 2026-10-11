@@ -210,9 +210,14 @@ function handleSync(body, ip) {
       // bank confirmations are created only by the webhook; devices may file them (matched, ignored) but never
       // invent one or change what the bank said
       if (!cur || r.table !== '_collect' || cur.updated >= r.updated) continue;
-      r = { ...r, deleted: false, data: { ...(r.data || {}), ...Object.fromEntries(BANK_FIELDS.map((k) => [k, cur.data[k]])) } };
+      const tampered = BANK_FIELDS.some((k) => JSON.stringify(r.data?.[k] ?? null) !== JSON.stringify(cur.data[k] ?? null));
+      const { origin, bank, ...sent } = r;
+      r = { ...sent, deleted: false, data: { ...(r.data || {}), ...Object.fromEntries(BANK_FIELDS.map((k) => [k, cur.data[k]])) } };
+      // the device's copy said something else about the money: send the bank's version back, newer, so it replaces it
+      if (tampered) r.updated = new Date(Math.max(Date.now(), Date.parse(sent.updated) + 1)).toISOString();
       doc.records[r.id] = { ...r, _seq: ++doc.seq };
-      accepted.add(r.id); changed = true;
+      if (!tampered) accepted.add(r.id);
+      changed = true;
       continue;
     }
     if (!cur) { doc.records[r.id] = { ...r, _seq: ++doc.seq }; accepted.add(r.id); changed = true; continue; }
@@ -231,9 +236,9 @@ function handleSync(body, ip) {
   }
 
   const since = Number(body.since) || 0;
-  const records = [...resend.values()];
+  const records = [...resend.values()].map(outgoing);
   for (const r of Object.values(doc.records)) {
-    if (r._seq > since && !accepted.has(r.id) && !resend.has(r.id)) { const { _seq, ...rest } = r; records.push(rest); }
+    if (r._seq > since && !accepted.has(r.id) && !resend.has(r.id)) { const { _seq, ...rest } = r; records.push(outgoing(rest)); }
   }
   if (changed) { persist(doc.ws, doc); notify(doc.ws, doc.seq); }
   return { status: 200, json: { ok: true, seq: doc.seq, records, app: appOut, ws: doc.ws, ...(a.weak ? { weak: true } : {}) } };
@@ -263,7 +268,7 @@ function handleExport(body, ip) {
   const a = authenticate(body, ip);
   if (a.error) return a;
   const { doc } = a;
-  return { status: 200, json: { format: 'vina-backup', version: 1, exported: new Date().toISOString(), app: doc.app, records: Object.values(doc.records).map(({ _seq, ...r }) => r) } };
+  return { status: 200, json: { format: 'vina-backup', version: 1, exported: new Date().toISOString(), app: doc.app, records: Object.values(doc.records).map(({ _seq, ...r }) => outgoing(r)) } };
 }
 
 // ---- Smart Collect: UPI payment confirmations from the collections provider ---------------------------------------------
@@ -309,12 +314,23 @@ export function normalizeEvent(body) {
 const BANK_FIELDS = ['utr', 'amount', 'ref', 'vpa', 'name', 'phone', 'at', 'source'];
 const validEvent = (e) => /^[A-Za-z0-9-]{6,40}$/.test(e.utr) && Number.isFinite(e.amount) && e.amount > 0 && e.amount < 1e8;
 
+/**
+ * Payment confirmations exist on this server only because the signed webhook (or, in sandbox, the simulator) created
+ * them: devices cannot create one, and the bank's fields are restored if a device changes them (handleSync). Every
+ * copy sent out says so (`origin: 'server'`) and carries the bank's facts separately (`bank`: UTR, amount, source...),
+ * a copy no device code writes. Devices count a payment as bank-confirmed only from that snapshot (collect.js
+ * bankConfirmations), never from anything a device wrote itself.
+ */
+const outgoing = (r) => (r.table === '_collect'
+  ? { ...r, origin: 'server', bank: Object.fromEntries(BANK_FIELDS.map((k) => [k, r.data?.[k] ?? null])) }
+  : r);
+
 function ingest(doc, e, source) {
   const id = `col_${crypto.createHash('sha256').update(e.utr).digest('hex').slice(0, 20)}`;
   if (doc.records[id]) return { status: 200, json: { ok: true, duplicate: true, id } };
   const now = new Date().toISOString();
   const { ok, status, ...data } = e;
-  doc.records[id] = { id, table: '_collect', data: { ...data, status: 'new', source }, created: now, updated: now, deleted: false, by: null, _seq: ++doc.seq };
+  doc.records[id] = { id, table: '_collect', origin: 'server', data: { ...data, status: 'new', source }, created: now, updated: now, deleted: false, by: null, _seq: ++doc.seq };
   persist(doc.ws, doc);
   notify(doc.ws, doc.seq);
   return { status: 200, json: { ok: true, id } };

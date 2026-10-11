@@ -10,6 +10,34 @@
 | Tests | [tests/unit/credit.test.mjs](../../tests/unit/credit.test.mjs) (5), e2e scenario "credit passport: …" |
 | Depends on | Phase 1: nothing external. Phase 2: Account Aggregator / GST data. Phase 3: a regulated lender partner |
 
+## Maturity: what this is, and is not
+
+| Level | Means | Where Vina is |
+|---|---|---|
+| 1. Financial visibility | The owner sees turnover, collections, payment regularity and gaps | **Built** |
+| 2. Credit readiness | A transparent summary that helps a shop prepare for a lender | Built as software; **not yet validated** with owners or credit professionals |
+| 3. Credit access | Lenders accept the evidence and use it in underwriting | **Not started**: needs lender partners, consented data sharing, independent validation |
+
+A score computed from the app's own books is not independent verification of those books. Only the bank-confirmed
+share (next section) comes from outside the shop.
+
+## Provenance: "bank-confirmed" means the bank said so
+
+Fixed 2026-10-11: any digital payment with a typed UTR used to count as verified, and the export called it
+bank-confirmed. Now every digital payment is one of:
+
+| Kind | What it takes | In the export |
+|---|---|---|
+| **Bank-confirmed** | A payment record the sync server created from the provider's **signed webhook** (never a device, never the sandbox), applied to **this bill**, counted up to the **amount the bank reported** for that UTR across all bills | `bankConfirmed90`, `bankConfirmedShare` |
+| **Reference only** | A UTR is present but nothing above holds: typed by hand, a real UTR copied to another bill, a sandbox payment, or above the confirmed amount | `referenced90`, `referenceShare` (sandbox also in `simulated90`) |
+| **No reference** | Digital (UPI, card, transfer) with nothing to check | part of `digital90` only |
+
+The device reads the bank's facts only from a snapshot the server attaches to each payment record (`bank`); no
+device code writes it, and no flag a device sets (`verified: true`, `source: 'provider'`) changes anything. If a
+device edits a confirmation, the server restores the bank's version and sends it back. Tests: `provenance: …`
+(credit.test.mjs) and the end-to-end part of `collect server: signed webhook …`. Still open: someone who tampers
+with their own device's storage can fake anything on that device; a server-signed export (C9) is the answer for lenders.
+
 ## 1. Problem
 
 A kirana or small service business that needs ₹50,000–₹5,00,000 of working capital usually hears "bring 12 months
@@ -38,7 +66,8 @@ Two gaps:
 - G2. The top 3 actions that would raise it, with the points each could add.
 - G3. An indicative working-capital limit grounded in a norm Indian banks actually use.
 - G4. A shareable export with aggregates only and an explicit consent block.
-- G5. Turn Smart Collect's bank-verified receipts into a measurable trust signal (`verifiedShare`).
+- G5. Turn Smart Collect's bank-confirmed receipts into a measurable trust signal (`bankConfirmedShare`), kept strictly
+  apart from references someone typed (`referenceShare`).
 
 **Non-goals**
 - Being a credit score or a credit decision. It is labelled indicative everywhere.
@@ -86,7 +115,7 @@ owner could get paid early (for example through TReDS, where the buyer is on it)
 - **consent:** purpose ("Working-capital loan assessment"), `validUntil` (30 days), and a plain statement of what it
   contains
 - score, band, factor points and values, metrics, limit, invoice-finance summary, monthly series
-- **basis:** how it was computed, that bank-confirmed receipts are counted in `verifiedShare`, and that it is
+- **basis:** how it was computed, how digital payments are split by provenance (below), and that it is
   indicative
 
 **Never included:** customer names, phone numbers, bill numbers or individual bills (asserted in unit and e2e tests).
@@ -132,6 +161,6 @@ This is data minimisation in the spirit of the DPDP Act, 2023.
 
 1. Which lenders accept a cash-flow pre-qualification signal, and what format do they want (AA FI types, a ULI
    schema)?
-2. Should the export include `verifiedShare` evidence (UTR list) on request, as a stronger proof with explicit extra
+2. Should the export include `bankConfirmedShare` evidence (UTR list) on request, as a stronger proof with explicit extra
    consent?
 3. Is 20% × band too conservative for shops with ≥ 70% bank-confirmed inflows? (Calibrate in phase 3.)

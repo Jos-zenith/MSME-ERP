@@ -49,7 +49,10 @@ test('passport: steady, mostly-digital, cash-on-the-spot shop scores strong; lim
   assert.equal(p.metrics.growth, 0);
   assert.equal(p.metrics.receivables, 0);
   assert.ok(Math.abs(p.metrics.digitalShare - 0.7) < 1e-9);
-  assert.equal(p.metrics.verifiedShare, 1, 'every UPI receipt carries a bank UTR');
+  // these UPI rows have a reference someone typed: a reference supplied, never "bank-confirmed"
+  assert.equal(p.metrics.referenceShare, 1, 'every UPI receipt has a reference');
+  assert.equal(p.metrics.bankConfirmedShare, 0, 'none of them came from the bank');
+  assert.equal(p.metrics.verifiedShare, undefined, 'the ambiguous old metric is gone');
   const pts = Object.fromEntries(p.factors.map((f) => [f.id, f.points]));
   assert.deepEqual(pts, { history: 7, stability: 15, growth: 7, digital: 20, speed: 20, overdue: 10, concentration: 10, identity: 5 });
   assert.equal(p.score, 94);
@@ -108,4 +111,55 @@ test('passport export: aggregates and consent only, no customer names or phones'
   assert.equal(out.consent.validUntil, '2026-11-14');
   const text = JSON.stringify(out);
   assert.ok(!text.includes('Sunita') && !text.includes('99887') && !text.includes('INV-'), 'no personal data, no bill numbers');
+});
+
+// ---- provenance: "bank-confirmed" only from the bank -------------------------------------------------------------------
+/** A payment confirmation as the sync server delivers it: created by the signed webhook, matched to bills on a device. */
+const bankEvent = (store, { utr, amount, bills, source = 'provider', status = 'matched' }) => store.applyRemote({
+  id: `col_${utr}`, table: '_collect', origin: 'server', created: '2026-10-01T10:00:00.000Z', updated: '2026-10-01T10:00:00.000Z',
+  bank: { utr, amount, ref: '', vpa: '', name: '', phone: '', at: '2026-10-01T10:00:00.000Z', source },
+  data: { utr, amount, ref: '', at: '2026-10-01T10:00:00.000Z', source, status, by: 'auto', allocations: bills.map((id) => ({ id, amount })) },
+});
+const rowsBy = (p) => ({ digital: p.metrics.digital90, reference: p.metrics.referenced90, confirmed: p.metrics.bankConfirmed90, simulated: p.metrics.simulated90 });
+
+test('provenance: a typed UTR is a reference, not a bank confirmation; only a provider event bound to that bill counts', async () => {
+  const { store, sale } = await shop();
+  const day = '2026-10-01';
+  const real = (await sale(day, { paid: [['UPI', 1000, 'UTR111111111']] })).record;      // the bank confirmed this one
+  await sale(day, { paid: [['UPI', 1000, '12345']] });                                       // the cashier typed a number
+  await sale(day, { paid: [['UPI', 1000, 'UTR111111111']] });                                // the REAL UTR, copied onto another bill
+  await sale(day, { paid: [['UPI', 1000]] });                                                // UPI, no reference at all
+  await sale(day, { paid: [['Cash', 1000]] });
+  bankEvent(store, { utr: 'UTR111111111', amount: 1000, bills: [real.id] });
+  const p = creditPassport(store, { today: TODAY });
+  assert.deepEqual(rowsBy(p), { digital: 4000, reference: 2000, confirmed: 1000, simulated: 0 });
+  assert.equal(p.metrics.bankConfirmedShare, 0.25, 'one of four digital payments is bank-confirmed');
+  assert.equal(p.metrics.referenceShare, 0.5, 'two have a reference nobody verified (typed, or copied to the wrong bill)');
+});
+
+test('provenance: one bank payment never confirms more than its amount; sandbox and unmatched events never confirm', async () => {
+  const { store, sale } = await shop();
+  const day = '2026-10-01';
+  const a = (await sale(day, { qty: 2, paid: [['UPI', 2000, 'UTR222222222']] })).record;    // claims 2,000 on a 500 payment
+  const b = (await sale(day, { paid: [['UPI', 1000, 'SIM000000001']] })).record;             // a simulated (sandbox) payment
+  const c = (await sale(day, { paid: [['UPI', 1000, 'UTR333333333']] })).record;             // event arrived but not yet matched
+  bankEvent(store, { utr: 'UTR222222222', amount: 500, bills: [a.id] });
+  bankEvent(store, { utr: 'SIM000000001', amount: 1000, bills: [b.id], source: 'sandbox' });
+  bankEvent(store, { utr: 'UTR333333333', amount: 1000, bills: [], status: 'review' });
+  const p = creditPassport(store, { today: TODAY });
+  assert.deepEqual(rowsBy(p), { digital: 4000, reference: 3500, confirmed: 500, simulated: 1000 });
+  assert.ok(c);
+});
+
+test('provenance: a device cannot promote its own record to "provider"; the export names the three kinds plainly', async () => {
+  const { store, sale } = await shop();
+  const bill = (await sale('2026-10-01', { paid: [['UPI', 1000, 'UTR444444444']] })).record;
+  // a device-made confirmation (no server copy) carrying a client-supplied claim
+  store.putSystemRecord('_collect', 'col_fake', { utr: 'UTR444444444', amount: 1000, source: 'provider', status: 'matched', verified: true, allocations: [{ id: bill.id, amount: 1000 }] });
+  const p = creditPassport(store, { today: TODAY });
+  assert.equal(p.metrics.bankConfirmed90, 0, 'a confirmation this device wrote itself does not count');
+  const out = passportExport(p, store.business);
+  for (const k of ['digitalShare', 'referenceShare', 'bankConfirmedShare']) assert.ok(k in out.metrics, k);
+  assert.match(out.basis, /bank-confirmed[^.]*signed webhook/i);
+  assert.match(out.basis, /typed/i);
 });

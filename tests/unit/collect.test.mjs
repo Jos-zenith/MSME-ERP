@@ -238,6 +238,20 @@ test('collect server: signed webhook -> record on every device; bad signatures, 
     assert.equal(store.getRecord('invoices', inv2.id).data.status, 'Paid');
     assert.equal(store.getRecord('invoices', inv2.id).data.payments[0].ref.startsWith('SIM'), true);
 
+    // provenance, end to end: the signed provider payment is bank-confirmed; the sandbox one is only simulated
+    await sync.run();
+    const { creditPassport } = await import('../../public/js/credit.js');
+    const pp = creditPassport(store).metrics;
+    assert.deepEqual([pp.bankConfirmed90, pp.simulated90], [1000, 500]);
+    // a device rewrites the sandbox payment as a large "provider" one: its own passport ignores the edit, and the
+    // server sends the bank's version back
+    const sim = store.records(COLLECT_TABLE).find((r) => r.bank?.source === 'sandbox');
+    store.putSystemRecord(COLLECT_TABLE, sim.id, { ...sim.data, source: 'provider', amount: 99999, verified: true });
+    assert.equal(creditPassport(store).metrics.bankConfirmed90, 1000, 'local edits to a confirmation never count');
+    await sync.run(); await sync.run();
+    const back = store.getRecord(COLLECT_TABLE, sim.id);
+    assert.deepEqual([back.data.source, back.data.amount], ['sandbox', 500], 'the server restored the bank version on this device');
+
     // rotating the secret retires the old hook address
     const rotated = await sync.collectSetup({ rotate: true });
     assert.notEqual(rotated.hookUrl, setup.hookUrl);
