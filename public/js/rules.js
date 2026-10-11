@@ -13,6 +13,7 @@
 import { matchConditions, renderTemplate } from './logic.js';
 import { tryEvaluate, todayStr, daysBetween, toNum } from './formula.js';
 import { makeScope, fieldOf, isBlank } from './schema.js';
+import { hash, stable } from './ledger.js';
 
 export const TRIGGERS = ['created', 'updated', 'saved', 'any', 'field_changed', 'deleted', 'approved', 'rejected', 'before_save', 'schedule'];
 export const ACTIONS = ['message', 'set_field', 'create_record', 'approval', 'adjust_stock', 'webhook', 'block'];
@@ -140,6 +141,14 @@ async function execAction(store, rule, a, event, table, rec, prev, depth) {
         if (!delta) continue;
         const item = store.getRecord(itemCol.ref, itemId);
         if (!item) continue;
+        // stock kept as movements: add this bill's change as its own row, so a sale on another device also counts.
+        // Its id names the change (rule, bill, item, the bill version it started from, what happened), so the same
+        // change made on two devices (both delete the same bill) is one row, not two
+        if (fieldOf(store.table(itemCol.ref), a.targetField)?.moves) {
+          const id = `M${hash(`${rule.id}|${rec.id}|${itemId}|${event}|${stable(versionBefore(store, event, rec, prev))}`)}`;
+          await store.moveStock(itemCol.ref, itemId, a.targetField, sign * delta, { _id: id, kind: 'rule', rule: rule.id, src: rec.id, src_table: table.id }, { depth: depth + 1 });
+          continue;
+        }
         const cur = toNum(item.data[a.targetField]);
         await store.patchRecord(itemCol.ref, itemId, { [a.targetField]: Math.round((cur + sign * delta) * 1000) / 1000 }, { depth: depth + 1 });
       }
@@ -156,6 +165,14 @@ async function execAction(store, rule, a, event, table, rec, prev, depth) {
     }
     default: return null;
   }
+}
+
+/** The version (vv) a record had before the save or delete that ran this rule: a created record's own edit taken off. */
+function versionBefore(store, event, rec, prev) {
+  if (event !== 'created') return prev?.vv || {};
+  const vv = { ...(rec.vv || {}) }, dev = store.meta?.device;
+  if (vv[dev] > 1) vv[dev] -= 1; else delete vv[dev];
+  return vv;
 }
 
 /** Run every scheduled rule against every matching record. Called when the app opens / becomes visible. */

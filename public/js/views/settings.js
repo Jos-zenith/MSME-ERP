@@ -4,7 +4,7 @@ import { t, setLang, LANGS, getLang } from '../i18n.js';
 import { icon } from '../ui/icons.js';
 import { pageHeader, labeled, pill } from '../ui/bits.js';
 import { qrSvg, upiLink } from '../print.js';
-import { cryptoAvailable, setPin, lockEnabled, encryptJson, decryptJson, ENCRYPTED_FORMATS } from '../security.js';
+import { cryptoAvailable, setPin, lockEnabled, encryptJson, decryptJson, ENCRYPTED_FORMATS, passphraseProblem, suggestPassphrase } from '../security.js';
 import { TEMPLATES } from '../templates/index.js';
 import { usesGst, gstSettingsCard } from '../../gst/js/ui.js';
 import { gstinProblem } from '../../gst/js/gst.js';
@@ -120,13 +120,29 @@ export function settingsView(ctx) {
   const url = h('input', { value: cfg?.url || (location.protocol.startsWith('http') ? location.origin : ''), placeholder: 'https://shop.example.com', 'aria-label': t('Server address') });
   const ws = h('input', { value: cfg?.ws || '', placeholder: t('e.g. sharma-store'), autocomplete: 'off', 'aria-label': t('Workspace name') });
   const pass = h('input', { type: 'password', value: '', placeholder: cfg ? '••••••' : '', autocomplete: 'off', 'aria-label': t('Passphrase') });
-  const mode = h('select', { 'aria-label': t('Which way') },
+  const code = h('input', { value: '', placeholder: 'xxxx-xxxx-xxxx', autocomplete: 'off', 'aria-label': t('Setup code') });
+  const suggest = h('button.btn.small', { type: 'button', onclick: () => { pass.type = 'text'; pass.value = suggestPassphrase(); passHint(); } }, t('Suggest one'));
+  const passNote = h('div.hint.pass-note');
+  // a new workspace needs a strong passphrase: say so while it is typed, in the shop's language
+  const WEAK = () => ({ short: t('Use at least 10 characters.'), simple: t('Use more different letters and numbers.'), guessable: t('Too easy to guess: avoid common passwords and the workspace name.') });
+  const passHint = () => {
+    const why = pass.value ? passphraseProblem(pass.value, ws.value) : null;
+    passNote.textContent = why ? WEAK()[why] : pass.value ? t('Good. Write it down: every device needs it.') : '';
+    passNote.className = why ? 'hint bad pass-note' : 'hint pass-note';
+  };
+  pass.addEventListener('input', passHint);
+  const mode = h('select', { 'aria-label': t('Which way'), onchange: () => { newBox.hidden = mode.value !== 'upload'; } },
     h('option', { value: 'upload' }, t('This device has my shop: upload it')), h('option', { value: 'adopt' }, t('This is a new device: download my shop')));
+  const newBox = h('div', labeled(t('Setup code (only for a new workspace: shown in the server window when it starts)'), code));
+  newBox.hidden = !!cfg;
   const status = h('div.sync-status');
   const paintStatus = () => {
     const st = sync.status;
+    const c = store.meta.sync;
     status.replaceChildren(pill({ off: t('Not connected'), idle: t('Connected'), syncing: t('Syncing…'), offline: t('Offline: will sync later'), error: t('Problem') }[st], st === 'idle' ? 'good' : st === 'error' ? 'bad' : 'muted'),
-      sync.lastAt ? h('span.muted', ` ${t('Last sync')}: ${sync.lastAt.toLocaleTimeString()}`) : null, sync.error ? h('div.hint.bad', sync.error) : null);
+      sync.lastAt ? h('span.muted', ` ${t('Last sync')}: ${sync.lastAt.toLocaleTimeString()}`) : null, sync.error ? h('div.hint.bad', sync.error) : null,
+      c?.refused ? h('div.hint.bad.sync-refused', t('This device stopped syncing because the server turned down the passphrase. If it was changed on another device, type the new one above and press Save & sync now.')) : null,
+      c?.weak && !c.refused ? h('div.hint.warn.sync-weak', t('Your sync passphrase is easy to guess. Change it below (every device will need the new one).')) : null);
   };
   paintStatus();
   const off = sync.on(paintStatus);
@@ -135,18 +151,23 @@ export function settingsView(ctx) {
     h('p.hint', t('Optional. Everything works offline. If you run the small sync server (see README) your devices share data whenever they are online, and the server keeps daily backups.')),
     status,
     h('div.two', labeled(t('Server address'), url), labeled(t('Workspace name'), ws)),
-    h('div.two', labeled(t('Passphrase (the same on every device)'), pass), !cfg ? labeled(t('Which way'), mode) : h('span')),
+    h('div.two', h('div', labeled(t('Passphrase (the same on every device)'), pass), !cfg ? h('div.row', suggest) : null, passNote), !cfg ? labeled(t('Which way'), mode) : h('span')),
+    !cfg ? newBox : null,
     labeled(t('Device tag (keeps invoice numbers unique across devices, e.g. A or B)'), text(s, 'deviceTag', { maxlength: 3 })),
     h('div.row',
       h('button.btn.primary', { onclick: async () => {
         if (!url.value.trim() || !ws.value.trim() || (!pass.value && !cfg)) { toast(t('Fill in the server, workspace and passphrase.'), { kind: 'warn' }); return; }
         if (mode.value === 'adopt' && !cfg && store.app && store.records(store.app.tables[0]?.id).length && !(await confirmDialog(t('This replaces the shop on this device with the one on the server. Continue?'), { danger: true, yes: t('Replace') }))) return;
-        sync.configure({ url: url.value, ws: ws.value, token: pass.value || cfg.token, adopt: !cfg && mode.value === 'adopt' });
+        // a setup code means "make a new workspace": the server then insists on a strong passphrase, so check it here first
+        const create = !cfg && mode.value === 'upload' && !!code.value.trim();
+        if (create && passphraseProblem(pass.value, ws.value)) { passHint(); toast(passNote.textContent, { kind: 'warn' }); return; }
+        sync.configure({ url: url.value, ws: ws.value, token: pass.value || cfg.token, adopt: !cfg && mode.value === 'adopt', create, setupCode: code.value });
         const r = await sync.run();
         toast(r.error ? `${t('Sync problem')}: ${r.error}` : `${t('Synced')}: ↑${r.pushed ?? 0} ↓${r.pulled ?? 0}`, { kind: r.error ? 'warn' : '' });
-        if (!r.error && mode.value === 'adopt') location.reload();
+        if (!r.error && !cfg) { await store.flush(); location.reload(); }   // first connection: show the connected card (and the downloaded shop), once saved
       } }, cfg ? t('Save & sync now') : t('Connect')),
       cfg ? h('button.btn', { onclick: async () => { const r = await sync.run(); toast(r.error ? `${t('Sync problem')}: ${r.error}` : `${t('Synced')}: ↑${r.pushed ?? 0} ↓${r.pulled ?? 0}`); } }, t('Sync now')) : null,
+      cfg ? h('button.btn', { onclick: () => changePassphrase(store, sync) }, t('Change passphrase')) : null,
       cfg ? h('button.btn.ghost', { onclick: () => { sync.disconnect(); location.reload(); } }, t('Disconnect')) : null));
 
   // ---- Smart Collect
@@ -168,6 +189,19 @@ export function settingsView(ctx) {
     h('p.hint', `${t('Version')} ${VERSION}`));
 
   return h('div.settings-page', pageHeader(t('Settings')), business, gstCard, collectCard, region, security, backup, syncCard, data);
+}
+
+/** New passphrase for every device: when a phone is lost or someone who knew it leaves. */
+async function changePassphrase(store, sync) {
+  const next = await promptDialog(t('New passphrase (write it down: every device needs it)'), suggestPassphrase(), { title: t('Change passphrase') });
+  if (!next) return;
+  const why = passphraseProblem(next, store.meta.sync?.ws);
+  if (why) { toast({ short: t('Use at least 10 characters.'), simple: t('Use more different letters and numbers.'), guessable: t('Too easy to guess: avoid common passwords and the workspace name.') }[why], { kind: 'warn' }); return; }
+  if (!(await confirmDialog(t('Other devices stop syncing until you type the new passphrase on them (Settings → Sync). Their data stays on them and syncs once they have it. Change it?'), { yes: t('Change passphrase') }))) return;
+  try {
+    await sync.changePassphrase(next);
+    toast(t('Passphrase changed. Type it on your other devices in Settings → Sync.'), { ms: 7000 });
+  } catch (e) { toast(`${t('Sync problem')}: ${e.message}`, { kind: 'warn', ms: 7000 }); }
 }
 
 /**

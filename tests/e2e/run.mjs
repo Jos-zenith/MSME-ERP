@@ -338,7 +338,7 @@ await scenario('two devices stay in sync through the server (offline edits merge
   const b = await launch({ url: srv.url });
   try {
     await onboard(a.page);
-    await evalStore(a.page, `sync.configure({ url: location.origin, ws: 'sharma', token: 'secret-pass' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
+    await evalStore(a.page, `sync.configure({ url: location.origin, ws: 'sharma', token: 'secret-pass', create: true, setupCode: '${srv.setupCode}' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
     // device B joins the existing workspace from its first-run screen
     await b.page.waitForSelector('.onboard-card .lang-grid');
     await clickText(b.page, '.onboard-card .link', 'I already use this');
@@ -357,7 +357,8 @@ await scenario('two devices stay in sync through the server (offline edits merge
     await evalStore(a.page, `await sync.run();`);
     await evalStore(b.page, `await sync.run();`);
     assert.equal(await evalStore(b.page, `return store.count('invoices')`), 11, 'B sees the bill A made');
-    assert.equal(await evalStore(a.page, `return store.records('customers').filter(c => c.data.city === 'Goa').length`), 1, 'A sees the edit B made');
+    // A is on the live feed, so its own sync may already be under way: wait for it rather than racing it
+    await a.page.waitForFunction(() => window.__app.store.records('customers').filter((c) => c.data.city === 'Goa').length === 1, { timeout: 5000 });
     // a wrong passphrase is refused
     const bad = await evalStore(b.page, `sync.configure({ url: location.origin, ws: 'sharma', token: 'wrong-pass' }); return (await sync.run()).error`);
     assert.match(bad, /did not accept/);
@@ -369,7 +370,7 @@ await scenario('real time: a bill saved on the counter appears on the owner\'s o
   const b = await launch({ url: srv.url, viewport: { width: 390, height: 844, isMobile: true, hasTouch: true } });
   try {
     await onboard(a.page);
-    await evalStore(a.page, `sync.configure({ url: location.origin, ws: 'live-shop', token: 'secret-pass' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
+    await evalStore(a.page, `sync.configure({ url: location.origin, ws: 'live-shop', token: 'secret-pass', create: true, setupCode: '${srv.setupCode}' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
     await b.page.waitForSelector('.onboard-card .lang-grid');
     await clickText(b.page, '.onboard-card .link', 'I already use this');
     await b.page.waitForSelector('.onboard-card input');
@@ -700,7 +701,7 @@ await scenario('one-tap WhatsApp payment reminder next to unpaid bills', async (
 
 // ---- Smart Collect & credit passport ---------------------------------------------------------------------------------
 const collectOnFor = (page, ws) => evalStore(page, `
-  sync.configure({ url: location.origin, ws: '${ws}', token: 'secret-pass' });
+  sync.configure({ url: location.origin, ws: '${ws}', token: 'secret-pass', create: true, setupCode: '${srv.setupCode}' });
   const r = await sync.run(); if (r.error) throw new Error(r.error);
   store.settings.collect = { enabled: true, sandbox: true, since: new Date().toISOString().slice(0, 10) };
   store.touchApp();`);
@@ -805,6 +806,135 @@ await scenario('credit passport: score, factors, indicative limit and an export 
   assert.match(await text(page), /Only the owner can open this/);
 });
 
+
+await scenario('two browsers offline: ₹300 cash on one, ₹500 UPI on the other, both survive sync; conflicts and reversals are shown, not hidden', async () => {
+  const a = await launch({ url: srv.url });
+  const b = await launch({ url: srv.url });
+  try {
+    await onboard(a.page);
+    await evalStore(a.page, `sync.configure({ url: location.origin, ws: 'ledger-shop', token: 'secret-pass', create: true, setupCode: '${srv.setupCode}' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
+    await b.page.waitForSelector('.onboard-card .lang-grid');
+    await clickText(b.page, '.onboard-card .link', 'I already use this');
+    await b.page.waitForSelector('.onboard-card input');
+    const ins = await b.page.$$('.onboard-card input');
+    await ins[0].click({ clickCount: 3 }); await ins[0].type(srv.url);
+    await ins[1].type('ledger-shop'); await ins[2].type('secret-pass');
+    await clickText(b.page, '.onboard-card .btn.primary', 'Join');
+    await b.page.waitForSelector('.topbar', { timeout: 8000 });
+    // a ₹1,000+ credit bill for Sunita, on both devices
+    const id = await evalStore(a.page, `
+      const c = store.records('customers').find(x => x.data.name === 'Sunita Sharma');
+      const it = store.records('items').find(x => x.data.code === 'RIC5');
+      const r = (await store.saveRecord('invoices', { customer: c.id, items: [{ item: it.id, qty: 2 }] })).record;
+      await sync.run(); return r.id;`);
+    await evalStore(b.page, `await sync.run();`);
+    assert.ok(await evalStore(b.page, `return !!store.getRecord('invoices', '${id}')`));
+    // both lose the internet; each records a payment and a different delivery note
+    await a.page.setOfflineMode(true); await b.page.setOfflineMode(true);
+    const add = (mode, amount, note) => `const r = store.getRecord('invoices', '${id}');
+      await store.patchRecord('invoices', r.id, { notes: '${note}', payments: [...r.data.payments, { mode: '${mode}', amount: ${amount} }] });`;
+    await evalStore(a.page, add('Cash', 300, 'Deliver Monday'));
+    await sleep(20);
+    await evalStore(b.page, add('UPI', 500, 'Deliver Friday'));
+    // and each sells one bag of the same rice: both sales must come off the stock
+    const rice = `store.getRecord('items', store.records('items').find(x => x.data.code === 'RIC5').id)`;
+    const stockBefore = await evalStore(a.page, `return ${rice}.data.stock`);
+    const sellRice = `const it = ${rice}; await store.saveRecord('invoices', { items: [{ item: it.id, qty: 1 }] });`;
+    await evalStore(a.page, sellRice); await evalStore(b.page, sellRice);
+    assert.match(await evalStore(a.page, `return (await sync.run()).skipped ? 'skipped' : 'ran'`), /skipped/, 'offline: nothing is sent');
+    // back online, in either order
+    await b.page.setOfflineMode(false); await a.page.setOfflineMode(false);
+    for (const p of [b.page, a.page, b.page, a.page]) await evalStore(p, `await sync.run();`);
+    for (const p of [a.page, b.page]) {
+      const d = await evalStore(p, `const d = store.getRecord('invoices', '${id}').data; return { rows: d.payments.map(x => x.mode + ' ' + x.amount).sort(), paid: d.paid };`);
+      assert.deepEqual(d, { rows: ['Cash 300', 'UPI 500'], paid: 800 });
+      assert.equal(await evalStore(p, `return ${rice}.data.stock`), stockBefore - 2, 'both offline sales came off the stock');
+    }
+    // after a reload (IndexedDB, not memory) the owner sees both payments, and the note conflict, on the bill
+    await a.page.reload(); await a.page.waitForSelector('.topbar');
+    await goto(a.page, `#/t/invoices/${id}`);
+    await a.page.waitForSelector('.conflict-banner');
+    const banner = await a.page.$eval('.conflict-banner', (e) => e.textContent);
+    assert.match(banner, /Changed on two devices at the same time/);
+    assert.match(banner, /Notes: kept “Deliver (Monday|Friday)”; the other device had “Deliver (Monday|Friday)”/);
+    assert.match(await text(a.page), /Cash[\s\S]*₹300\.00[\s\S]*UPI[\s\S]*₹500\.00/);
+    await shot(a.page, 'ledger-conflict');
+    await clickText(a.page, '.conflict-banner .btn', 'Checked');
+    await a.page.waitForFunction(() => !document.querySelector('.conflict-banner'));
+    // correcting a payment keeps the old one in history, crossed out
+    await evalStore(a.page, `const r = store.getRecord('invoices', '${id}');
+      await store.patchRecord('invoices', r.id, { payments: r.data.payments.map(p => p.amount === 300 ? { ...p, amount: 350 } : p) });`);
+    await a.page.waitForSelector('.reversals');
+    assert.match(await a.page.$eval('.reversals', (e) => e.textContent), /Reversed: Payments received[\s\S]*₹300\.00[\s\S]*Corrected/);
+    await shot(a.page, 'ledger-reversal');
+    // the item shows where its stock went: both sales, each linked to its bill
+    await goto(a.page, `#/t/items/${await evalStore(a.page, `return ${rice}.id`)}`);
+    await a.page.waitForSelector('.stock-history');
+    assert.equal((await a.page.$$('.stock-history tbody a')).length >= 2, true, 'each sale links to its bill');
+    await shot(a.page, 'stock-history');
+  } finally { await a.close(); await b.close(); }
+});
+
+await scenario('sync accounts: the owner connects with the setup code and a suggested passphrase; a typo cannot join; changing the passphrase stops the old phone', async () => {
+  const a = await launch({ url: srv.url });
+  const b = await launch({ url: srv.url });
+  const field = (page, label) => page.$(`.settings-page input[aria-label="${label}"]`);
+  try {
+    await onboard(a.page);
+    await goto(a.page, '#/settings');
+    await a.page.waitForSelector('.settings-page input[aria-label="Workspace name"]');
+    await (await field(a.page, 'Workspace name')).type('Verma Kirana');
+    // a weak passphrase is caught on the device, before the server
+    await (await field(a.page, 'Passphrase')).type('verma123');
+    assert.match(await a.page.$eval('.settings-page .pass-note', (e) => e.textContent), /at least 10 characters/);
+    await clickText(a.page, '.settings-page .btn', 'Suggest one');
+    const pass = await a.page.$eval('.settings-page input[aria-label="Passphrase"]', (e) => e.value);
+    assert.match(pass, /^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
+    assert.match(await text(a.page), /Write it down: every device needs it/);
+    // without the setup code a new workspace is refused
+    await clickText(a.page, '.settings-page .btn.primary', 'Connect');
+    await a.page.waitForFunction(() => /did not accept/.test(document.querySelector('.sync-status')?.textContent || ''));
+    await (await field(a.page, 'Setup code')).type(srv.setupCode.toUpperCase());
+    // connected: the page reloads to show the connected card
+    await Promise.all([a.page.waitForNavigation({ timeout: 8000 }), clickText(a.page, '.settings-page .btn.primary', 'Connect')]);
+    await a.page.waitForSelector('.topbar');
+    assert.equal(await evalStore(a.page, `return store.meta.sync.since > 0 && !store.meta.sync.refused`), true);
+    assert.equal(await evalStore(a.page, `return store.meta.sync.setupCode`), undefined, 'the setup code is not kept');
+
+    // the phone mistypes the shop's name: refused, nothing created; then the right name, typed differently, works
+    await b.page.waitForSelector('.onboard-card .lang-grid');
+    await clickText(b.page, '.onboard-card .link', 'I already use this');
+    await b.page.waitForSelector('.onboard-card input');
+    const ins = await b.page.$$('.onboard-card input');
+    await ins[0].click({ clickCount: 3 }); await ins[0].type(srv.url);
+    await ins[1].type('verma kiranaa'); await ins[2].type(pass);
+    await clickText(b.page, '.onboard-card .btn.primary', 'Join');
+    await b.page.waitForFunction(() => /did not accept/.test(document.querySelector('.onboard-card .hint.bad')?.textContent || ''));
+    await ins[1].click({ clickCount: 3 }); await ins[1].type('VERMA KIRANA');
+    await clickText(b.page, '.onboard-card .btn.primary', 'Join');
+    await b.page.waitForSelector('.topbar', { timeout: 8000 });
+    assert.equal(await evalStore(b.page, `return store.app.name`), await evalStore(a.page, `return store.app.name`));
+
+    // the owner changes the passphrase (the phone was lost); the phone stops syncing and says why
+    await goto(a.page, '#/settings');
+    await clickText(a.page, '.settings-page .btn', 'Change passphrase');
+    await a.page.waitForSelector('.modal input');
+    const next = await a.page.$eval('.modal input', (e) => e.value);
+    assert.notEqual(next, pass, 'a fresh one is suggested');
+    await clickText(a.page, '.modal .btn.primary', 'OK');
+    await a.page.waitForFunction(() => /Other devices stop syncing/.test(document.querySelector('.modal')?.textContent || ''));
+    await clickText(a.page, '.modal .btn.primary', 'Change passphrase');
+    await a.page.waitForFunction((n) => window.__app.store.meta.sync.token === n, {}, next);
+    await evalStore(a.page, `const c = store.records('customers')[0]; await store.patchRecord('customers', c.id, { city: 'Indore' }); const r = await sync.run(); if (r.error) throw new Error(r.error);`);
+    await evalStore(b.page, `await sync.run();`);
+    await goto(b.page, '#/settings');
+    await b.page.waitForSelector('.sync-refused');
+    assert.match(await b.page.$eval('.sync-refused', (e) => e.textContent), /stopped syncing because the server turned down the passphrase/);
+    await b.page.$eval('.sync-refused', (e) => e.scrollIntoView({ block: 'center' }));
+    await shot(b.page, 'sync-refused');
+    assert.equal(await evalStore(b.page, `return store.records('customers').filter(c => c.data.city === 'Indore').length`), 0, 'nothing reaches the old passphrase');
+  } finally { await a.close(); await b.close(); }
+});
 
 // ===================================================================================================
 await srv.close();

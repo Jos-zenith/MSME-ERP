@@ -17,7 +17,7 @@ export async function startServer() {
   process.env.DATA_DIR = dataDir;
   const mod = await import(`../../server/server.js?e2e=${Date.now()}`);
   const server = await mod.start(0, '127.0.0.1');
-  return { url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)), dataDir };
+  return { url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)), dataDir, setupCode: mod.SETUP_CODE };
 }
 
 export async function launch({ url, viewport = { width: 1280, height: 900 }, lang } = {}) {

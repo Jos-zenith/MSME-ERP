@@ -22,6 +22,8 @@ const ERR = {
 export function buildForm({ store, table, record, initial = {}, onSaved, onCancel, inModal = false, preview = false, startAtEmpty = false }) {
   const ctx = store.ctx();
   let data = computeRecord(table, { ...newRecordData(table), ...(record?.data || {}), ...initial }, ctx);
+  // what this form started from: a save can only take out payments the person editing actually saw (ledger.js)
+  const base = record ? JSON.parse(JSON.stringify(record.data)) : null;
   let dirty = false;
   const controls = new Map();   // field id -> control
   const editors = new Map();    // lines field id -> editor
@@ -217,7 +219,7 @@ export function buildForm({ store, table, record, initial = {}, onSaved, onCance
       }
       const before = data;
       applyWalkIn();
-      const res = await store.saveRecord(table.id, data, { id: record?.id, by: store.currentUser });
+      const res = await store.saveRecord(table.id, data, { id: record?.id, by: store.currentUser, base });
       if (!res.ok) { data = before; refresh(); showErrors(res); return; }
       dirty = false;
       onSaved?.(res.record, after);

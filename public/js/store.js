@@ -5,8 +5,9 @@ import {
   computeRecord, cleanRecord, validateRecord, findDuplicates, newRecordData, uid, normPhone, setLocale, hooksFor, suggestCode, isBlank, rowIsBlank,
 } from './schema.js';
 import { renderTemplate } from './logic.js';
-import { todayStr, toNum } from './formula.js';
+import { todayStr, toNum, round } from './formula.js';
 import { t } from './i18n.js';
+import { applyLedgerEdits, mergeRecords, normalizeRows, openingRow, bump, VOID, CONFLICTS, derivedFieldsOf, stable, hash } from './ledger.js';
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 // Backup files say what they are. Files made before the app was renamed to Vina say 'msme-builder-backup' and still restore.
@@ -78,6 +79,10 @@ export class Store {
   }
   touchApp() { this.setApp(this.app); }
   table(id) { return this.app?.tables.find((t) => t.id === id); }
+  /** Line fields kept as ledgers (payments): rows are append-only and merge across devices instead of being replaced. */
+  ledgerFields(table) { return (table?.fields || []).filter((f) => f.type === 'lines' && f.ledger); }
+  /** Numbers kept as the sum of a ledger of movements (stock): `moves` names the ledger field. */
+  stockFields(table) { return (table?.fields || []).filter((f) => f.moves && table.fields.some((x) => x.id === f.moves && x.ledger)); }
   /** Staff (signed in with the staff PIN) may only add to tables marked staff: 'full' (the default). */
   canAddTo(tableId) { return this.currentUser !== 'staff' || (this.table(tableId)?.staff || 'full') === 'full'; }
   /**
@@ -216,13 +221,48 @@ export class Store {
    * rules -> persist -> after-save rules.
    * Returns { ok, record } or { ok:false, errors } / { ok:false, blocked }.
    */
-  async saveRecord(tableId, input, { id, depth = 0, by, noRules = false } = {}) {
+  async saveRecord(tableId, input, { id, depth = 0, by, noRules = false, base } = {}) {
     const table = this.table(tableId);
     if (!table) throw new Error(`Unknown table ${tableId}`);
     const existing = id ? this.byTable.get(tableId)?.get(id) : null;
     const prev = existing ? clone(existing) : null;
     const ctx = this.ctx();
+    const rid = existing?.id || id || uid();
     let data = cleanRecord(table, { ...(existing?.data || newRecordData(table)), ...input });
+    const held = existing ? { ...existing.data } : null;   // the stored data, as the merge rules below see it
+    if (base) base = { ...base };
+    // stock is kept as movements: a number typed or imported becomes an adjustment row (the change from what the editor
+    // saw), so a correction here and a sale on another device both count instead of one replacing the other
+    for (const f of this.stockFields(table)) {
+      const old = held;
+      if (old && !(old[f.moves] || []).length && !(old[VOID(f.moves)] || []).length && toNum(old[f.id])) {
+        // saved before stock had movements: its number becomes the opening row, the same on every device
+        const open = openingRow(rid, f.moves, toNum(old[f.id]));
+        const withOpen = (rows) => ((rows || []).some((r) => r?._id === open._id) ? rows || [] : [open, ...(rows || [])]);
+        held[f.moves] = [open];
+        data[f.moves] = withOpen(data[f.moves]);
+        if (base) base[f.moves] = withOpen(base[f.moves]);
+      }
+      const shown = toNum((base || held || {})[f.id]);
+      const change = round(toNum(data[f.id]) - shown, 3);
+      if (change) data[f.moves] = [...(data[f.moves] || []), { qty: change, kind: existing ? 'adjust' : 'opening' }];
+    }
+    const notes = [];
+    // money rows are never overwritten: new rows get a permanent id now (offline too); a changed or removed row is
+    // reversed and kept in history. The reversals come from the stored record, never from what the caller passed in.
+    for (const f of this.ledgerFields(table)) {
+      const cols = (f.columns || []).filter((c) => !c.formula).map((c) => c.id);
+      const out = applyLedgerEdits(rid, f.id, { rows: held?.[f.id] || [], voids: held?.[VOID(f.id)] || [] }, data[f.id],
+        { newId: uid, now: this.now(), by: by || this.currentUser || 'owner', cols, base: base ? base[f.id] || [] : undefined });
+      data[f.id] = out.rows;
+      if (out.voids.length) data[VOID(f.id)] = out.voids; else delete data[VOID(f.id)];
+      notes.push(...out.notes);
+    }
+    // conflict notes are only ever added or marked checked, never dropped by a save from an older screen
+    const merged = new Map();
+    for (const c of [...(existing?.data[CONFLICTS] || []), ...(input[CONFLICTS] || [])]) if (c?._id) merged.set(c._id, { ...merged.get(c._id), ...c, resolved: !!(merged.get(c._id)?.resolved || c.resolved) });
+    for (const n of notes) { const nid = `C${hash(`${rid}|${stable(n)}`)}`; if (!merged.has(nid)) merged.set(nid, { _id: nid, at: this.now(), ...n }); }
+    if (merged.size) data[CONFLICTS] = [...merged.values()]; else delete data[CONFLICTS];
     for (const f of table.fields) {
       if (f.auto && !data[f.id]) data[f.id] = this.nextNumber(table, f);
       if (f.autoCode && isBlank(data[f.id])) data[f.id] = this.suggestCode(table, f, data);
@@ -242,9 +282,10 @@ export class Store {
     }
 
     const t = this.now();
+    const vv = bump(existing?.vv, this.meta.device);
     const rec = existing
-      ? Object.assign(existing, { data, updated: t, dirty: 1, deleted: false })
-      : { id: id || uid(), table: tableId, data, created: t, updated: t, dirty: 1, by: by || null };
+      ? Object.assign(existing, { data, updated: t, dirty: 1, deleted: false, vv })
+      : { id: rid, table: tableId, data, created: t, updated: t, dirty: 1, by: by || null, vv };
     this._put(rec);
     this._persistRecord(rec);
     this.emit({ type: 'record', table: tableId, id: rec.id });
@@ -261,11 +302,23 @@ export class Store {
     const cur = this.byTable.get(tableId)?.get(id);
     // always move forward in time, or the sync server (newest edit wins) would ignore this change
     const after = (prev) => (t > prev ? t : new Date(Date.parse(prev) + 1).toISOString());
-    const rec = cur ? Object.assign(cur, { data, updated: after(cur.updated), dirty: 1, deleted: false }) : { id, table: tableId, data, created: t, updated: t, dirty: 1, by: null };
+    const vv = bump(cur?.vv, this.meta.device);
+    const rec = cur ? Object.assign(cur, { data, updated: after(cur.updated), dirty: 1, deleted: false, vv }) : { id, table: tableId, data, created: t, updated: t, dirty: 1, by: null, vv };
     this._put(rec);
     this._persistRecord(rec);
     this.emit({ type: 'record', table: tableId, id });
     return rec;
+  }
+
+  /**
+   * Add one stock movement (a sale takes out, a purchase puts in) to a record's `fieldId`. It is a new row with its own
+   * id, so movements made on two devices offline both count after sync (ledger.js). `info` says where it came from.
+   */
+  moveStock(tableId, id, fieldId, qty, info = {}, opts = {}) {
+    const f = this.table(tableId)?.fields.find((x) => x.id === fieldId);
+    const rec = this.getRecord(tableId, id);
+    if (!rec || !f?.moves || !qty) return Promise.resolve({ ok: false });
+    return this.saveRecord(tableId, { [f.moves]: [...(rec.data[f.moves] || []), { qty: round(qty, 3), ...info }] }, { ...opts, id });
   }
 
   patchRecord(tableId, id, patch, opts = {}) {
@@ -278,7 +331,7 @@ export class Store {
     const rec = this.getRecord(tableId, id);
     if (!rec) return;
     const prev = clone(rec);
-    rec.deleted = true; rec.updated = this.now(); rec.dirty = 1;
+    rec.deleted = true; rec.updated = this.now(); rec.dirty = 1; rec.vv = bump(rec.vv, this.meta.device);
     this._persistRecord(rec);
     this.emit({ type: 'record', table: tableId, id });
     await runRules(this, 'deleted', this.table(tableId), prev, prev, 0);
@@ -286,7 +339,7 @@ export class Store {
   async restoreRecord(tableId, id) {
     const rec = this.byTable.get(tableId)?.get(id);
     if (!rec?.deleted) return;
-    rec.deleted = false; rec.updated = this.now(); rec.dirty = 1;
+    rec.deleted = false; rec.updated = this.now(); rec.dirty = 1; rec.vv = bump(rec.vv, this.meta.device);
     this._persistRecord(rec);
     this.emit({ type: 'record', table: tableId, id });
     await runRules(this, 'created', this.table(tableId), rec, null, 0);
@@ -320,7 +373,7 @@ export class Store {
   async setApproval(tableId, id, approval) {
     const rec = this.getRecord(tableId, id);
     if (!rec) return;
-    rec.approval = approval; rec.updated = this.now(); rec.dirty = 1;
+    rec.approval = approval; rec.updated = this.now(); rec.dirty = 1; rec.vv = bump(rec.vv, this.meta.device);
     this._persistRecord(rec);
     this.emit({ type: 'approval' });
   }
@@ -333,7 +386,7 @@ export class Store {
     const rec = this.getRecord(tableId, id);
     if (!rec?.approval) return;
     rec.approval = { ...rec.approval, status, by: by || '', decidedAt: this.now(), decision: note };
-    rec.updated = this.now(); rec.dirty = 1;
+    rec.updated = this.now(); rec.dirty = 1; rec.vv = bump(rec.vv, this.meta.device);
     this._persistRecord(rec);
     this.emit({ type: 'approval' });
     await runRules(this, status, this.table(tableId), rec, null, 0);
@@ -422,15 +475,57 @@ export class Store {
     }
     if (changed.length) this._queue(() => this.db.putRecords(changed));
   }
-  /** Merge a record that arrived from the sync server. Newer timestamp wins; local unsynced edits win ties. */
+  /**
+   * Merge a record that arrived from the sync server with the copy here (see ledger.js). Money rows from both are
+   * kept, reversals win, the same bank payment counts once; plain fields keep the newer value, and edits made on two
+   * devices without seeing each other leave a conflict note on the record. Totals are then recomputed from the merged
+   * rows, so paid and balance can never disagree with the payments. If the merge holds anything the server's copy
+   * does not (local edits not sent yet, a conflict note), the record stays marked for sending.
+   */
   applyRemote(rec) {
     const cur = this.byTable.get(rec.table)?.get(rec.id);
-    if (cur && cur.updated >= rec.updated) return false;
-    const next = { ...rec }; delete next.dirty;
+    const table = this.table(rec.table);
+    if (rec.table.startsWith('_') || !table) {
+      // system records (bank confirmations) and tables this device does not know: newest copy wins, as before
+      if (cur && cur.updated >= rec.updated) return false;
+      const next = { ...rec }; delete next.dirty;
+      this._put(next); this._persistRecord(next);
+      this.emit({ type: 'record', table: rec.table, id: rec.id });
+      return true;
+    }
+    const derived = derivedFieldsOf(this.app, table.id);
+    const ledger = this.ledgerFields(table).map((f) => f.id);
+    let next;
+    if (!cur) {
+      next = { ...rec, data: { ...(rec.data || {}) } };
+      for (const k of ledger) next.data[k] = normalizeRows(rec.id, k, next.data[k]);
+    } else {
+      const m = mergeRecords(cur, rec, { derived, ledger, tie: 'a', now: this.now() });
+      if (!m.changedA) return false;
+      next = m.record;
+    }
+    delete next.dirty;
+    // two copies were combined here: totals from the merged rows. (A record seen for the first time keeps the totals
+    // it came with: the server recomputes after its own merges, and its customer may not have arrived yet.)
+    if (cur && !next.deleted) next.data = computeRecord(table, next.data, this.ctx());
+    const strip = (d) => stable(Object.fromEntries(Object.entries(d || {}).filter(([k]) => !derived.includes(k))));
+    if (cur?.dirty || strip(next.data) !== strip(rec.data) || !!next.deleted !== !!rec.deleted) next.dirty = 1;
     this._put(next);
     this._persistRecord(next);
     this.emit({ type: 'record', table: rec.table, id: rec.id });
     return true;
+  }
+  /** Mark a record's sync conflict notes as checked by the owner (they stay in its history). */
+  resolveConflicts(tableId, id) {
+    const rec = this.getRecord(tableId, id);
+    if (!rec?.data[CONFLICTS]?.length) return Promise.resolve({ ok: false });
+    return this.saveRecord(tableId, { [CONFLICTS]: rec.data[CONFLICTS].map((c) => ({ ...c, resolved: true })) }, { id, noRules: true });
+  }
+  /** Records that still have conflict notes nobody has checked. */
+  conflicted() {
+    const out = [];
+    for (const m of this.byTable.values()) for (const r of m.values()) if (!r.deleted && (r.data?.[CONFLICTS] || []).some((c) => !c.resolved)) out.push(r);
+    return out;
   }
   exportAll() {
     const records = [];
@@ -447,6 +542,11 @@ export class Store {
     this.app = bk.app;
     this._persistMeta('app');
     for (const r of bk.records || []) { r.dirty = 1; this._put(r); }
+    // totals recomputed from the restored rows (after every record is in, so linked customers and items resolve)
+    for (const r of bk.records || []) {
+      const tb = bk.app.tables?.find((x) => x.id === r.table);
+      if (tb && !r.deleted && r.data) r.data = computeRecord(tb, r.data, this.ctx());
+    }
     await this._queue(() => this.db.putRecords(bk.records || []));
     this._applyLocale();
     this.emit({ type: 'app' });

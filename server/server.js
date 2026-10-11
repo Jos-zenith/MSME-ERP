@@ -1,7 +1,11 @@
 // Vina server: serves the app AND (optionally) keeps your devices in sync and backed up.
 // Zero dependencies. Node 18+.   Run:  node server/server.js
 //
-//   PORT=8080  HOST=0.0.0.0  DATA_DIR=./data  ALLOW_NEW_WORKSPACES=true  CORS_ORIGIN=*  COLLECT_SANDBOX=true
+//   PORT=8080  HOST=0.0.0.0  DATA_DIR=./data  ALLOW_NEW_WORKSPACES=true  SETUP_CODE=…  CORS_ORIGIN=*  COLLECT_SANDBOX=true
+//
+// A new workspace is created only by a device that asks to create one AND gives the setup code. The code is printed
+// when the server starts (and kept in DATA_DIR/setup-code.txt; SETUP_CODE sets your own). ALLOW_NEW_WORKSPACES=false
+// turns creation off entirely. Joining an existing workspace needs only its name and passphrase.
 //
 // The app works fully offline without this server. The server only matters if you want the owner's laptop and the
 // staff phone to see the same data, or an automatic off-device copy of the shop's records.
@@ -11,6 +15,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
+import { mergeRecords, derivedFieldsOf, ledgerFieldsOf } from '../public/js/ledger.js';
+import { computeRecord } from '../public/js/schema.js';
+import '../public/gst/js/hooks.js';   // GST bills compute their totals with the GST engine, here as on the devices
+import { passphraseProblem, workspaceKey, WORKSPACE_MIN, WORKSPACE_MAX } from '../public/js/security.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -24,6 +32,27 @@ const KEEP_BACKUPS = 14;
 const SANDBOX = process.env.COLLECT_SANDBOX !== 'false';   // "Simulate a payment" in Settings; turn off in production
 
 fs.mkdirSync(path.join(DATA_DIR, 'backups'), { recursive: true });
+
+// ---- setup code: who may create a workspace -----------------------------------------------------------------------------
+// Without it, anyone who can reach the server could create workspaces (and fill its disk), and a typo in a workspace
+// name on a new phone used to create an empty shop instead of saying the name was wrong.
+const plainCode = (c) => String(c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function loadSetupCode() {
+  if (!ALLOW_NEW) return '';
+  if (process.env.SETUP_CODE) return process.env.SETUP_CODE.trim();
+  const f = path.join(DATA_DIR, 'setup-code.txt');
+  try { const c = fs.readFileSync(f, 'utf8').trim(); if (c) return c; } catch { /* first start */ }
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const code = [0, 1, 2].map(() => Array.from({ length: 4 }, () => abc[crypto.randomInt(abc.length)]).join('')).join('-');
+  fs.writeFileSync(f, `${code}\n`, { mode: 0o600 });
+  return code;
+}
+export const SETUP_CODE = loadSetupCode();
+function setupCodeOk(given) {
+  if (!SETUP_CODE) return false;
+  const a = crypto.createHash('sha256').update(plainCode(given)).digest(), b = crypto.createHash('sha256').update(plainCode(SETUP_CODE)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
 
 // ---- workspace storage (JSON file per workspace, held in memory, written atomically) ----------------------------
 const cache = new Map();
@@ -71,28 +100,93 @@ function tokenOk(doc, token) {
 }
 
 // ---- brute-force protection ----------------------------------------------------------------------------------------
+// Failed attempts are limited per address and workspace (8 a minute) and per workspace from all addresses together
+// (30 in 15 minutes, against guessing spread over many addresses). A device whose passphrase was already accepted is
+// recognised without the slow hash and is never limited, so an attacker cannot lock the shop's own devices out.
 const fails = new Map();
-function limited(key) {
+const PER_IP = [8, 60000], PER_WS = [30, 15 * 60000];
+function limited(key, [max, ms]) {
   const now = Date.now();
-  const list = (fails.get(key) || []).filter((t) => now - t < 60000);
-  fails.set(key, list);
-  return list.length >= 8;
+  const list = (fails.get(key) || []).filter((t) => now - t < ms);
+  if (list.length) fails.set(key, list); else fails.delete(key);
+  return list.length >= max;
 }
-const noteFail = (key) => fails.set(key, [...(fails.get(key) || []), Date.now()]);
+const noteFail = (...keys) => { for (const k of keys) fails.set(k, [...(fails.get(k) || []), Date.now()]); };
+setInterval(() => { for (const k of [...fails.keys()]) limited(k, k.startsWith('ws|') ? PER_WS : PER_IP); }, 10 * 60000).unref();
+const verified = new WeakMap();   // workspace doc -> sha256 of passphrases accepted since the server started
+const digest = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 // ---- API ------------------------------------------------------------------------------------------------------------------
+const WRONG = 'Wrong workspace name or passphrase';
+const WEAK = {
+  short: 'Use a passphrase of at least 10 characters',
+  simple: 'That passphrase has too few different characters',
+  guessable: 'That passphrase is easy to guess (a common password, or the workspace name in it)',
+};
+/**
+ * Every API call names a workspace and its passphrase. A workspace that does not exist is created only when the device
+ * asks (`create: true`, sent by the first device of a shop) with the server's setup code and a strong passphrase.
+ * Returns { doc, weak } or { status, error }. `weak`: the passphrase works but would not be accepted today.
+ */
 function authenticate(body, ip) {
   const { ws, token } = body || {};
-  if (typeof ws !== 'string' || typeof token !== 'string' || !ws.trim() || token.length < 4) return { status: 400, error: 'Workspace name and a passphrase of at least 4 characters are required' };
-  const key = `${ip}|${ws}`;
-  if (limited(key)) return { status: 429, error: 'Too many attempts' };
-  let doc = load(ws);
+  const name = typeof ws === 'string' ? ws.trim() : '';
+  if (name.length < WORKSPACE_MIN || name.length > WORKSPACE_MAX || typeof token !== 'string' || !token || token.length > 200) {
+    return { status: 400, error: `A workspace name (${WORKSPACE_MIN} to ${WORKSPACE_MAX} characters) and a passphrase are required` };
+  }
+  const norm = workspaceKey(name);
+  let doc = load(name) || (norm !== name ? load(norm) : null);   // names made before matching ignored case: exact first
+  const d = digest(token);
+  if (doc && verified.get(doc)?.has(d)) return { doc, weak: !!passphraseProblem(token, doc.ws) };
+  const keys = [`${ip}|${norm}`, `ws|${norm}`];
+  if (limited(keys[0], PER_IP) || limited(keys[1], PER_WS)) return { status: 429, error: 'Too many attempts' };
   if (!doc) {
+    if (!body.create) { noteFail(...keys); return { status: 403, error: WRONG }; }
     if (!ALLOW_NEW) return { status: 403, error: 'New workspaces are disabled on this server' };
-    doc = { ws, auth: hashToken(token), seq: 0, app: null, records: {} };
-    cache.set(ws, doc);
-  } else if (!tokenOk(doc, token)) { noteFail(key); return { status: 403, error: 'Wrong workspace name or passphrase' }; }
-  return { doc };
+    if (!setupCodeOk(body.setupCode)) { noteFail(...keys); return { status: 403, error: 'Wrong setup code. It is shown in the server window when it starts (and in setup-code.txt in its data folder)' }; }
+    const weak = passphraseProblem(token, norm);
+    if (weak) return { status: 400, error: WEAK[weak], code: `weak_${weak}` };
+    doc = { ws: norm, auth: hashToken(token), seq: 0, app: null, records: {}, created: new Date().toISOString() };
+    cache.set(norm, doc);
+    persist(norm, doc);
+  } else if (!tokenOk(doc, token)) { noteFail(...keys); return { status: 403, error: WRONG }; }
+  if (!verified.has(doc)) verified.set(doc, new Set());
+  verified.get(doc).add(d);
+  return { doc, weak: !!passphraseProblem(token, doc.ws) };
+}
+
+/**
+ * Change the workspace passphrase (a phone was lost, someone left). Devices still using the old one lose their live
+ * feed at once and are refused from their next request until the new passphrase is typed on them.
+ */
+function handlePassphrase(body, ip) {
+  const a = authenticate(body, ip);
+  if (a.error) return a;
+  const next = body.newToken;
+  if (typeof next !== 'string' || next.length > 200) return { status: 400, error: 'A new passphrase is required' };
+  const weak = passphraseProblem(next, a.doc.ws);
+  if (weak) return { status: 400, error: WEAK[weak], code: `weak_${weak}` };
+  a.doc.auth = hashToken(next);
+  a.doc.authChanged = new Date().toISOString();
+  verified.set(a.doc, new Set([digest(next)]));
+  persist(a.doc.ws, a.doc);
+  for (const res of [...(watchers.get(a.doc.ws) || [])]) res.end();
+  return { status: 200, json: { ok: true } };
+}
+
+/**
+ * Totals of a record the server has just combined from two copies, computed with the same engine the devices use,
+ * so the copy kept here (and in backups, and on a device that downloads the shop) never has a stale "paid".
+ */
+function recompute(doc, rec) {
+  const table = doc.app?.tables?.find((x) => x.id === rec.table);
+  if (!table || rec.deleted) return rec;
+  const ctx = {
+    getRecord: (tb, id) => { const r = doc.records[id]; return r && r.table === tb && !r.deleted ? r : null; },
+    getTable: (id) => doc.app.tables.find((x) => x.id === id),
+    business: doc.app.settings?.business || {}, settings: doc.app.settings || {},
+  };
+  try { return { ...rec, data: computeRecord(table, rec.data, ctx) }; } catch (e) { console.error('recompute', e); return rec; }
 }
 
 function handleSync(body, ip) {
@@ -100,34 +194,49 @@ function handleSync(body, ip) {
   if (a.error) return a;
   const { doc } = a;
   const accepted = new Set();
+  const resend = new Map();
   let changed = false;
 
-  for (let r of Array.isArray(body.records) ? body.records : []) {
-    if (!r || typeof r.id !== 'string' || typeof r.table !== 'string' || typeof r.updated !== 'string') continue;
-    const cur = doc.records[r.id];
-    if (cur && cur.updated >= r.updated) continue;          // last edit wins
-    if (r.table === '_collect' || cur?.table === '_collect') {
-      // bank confirmations are created only by the webhook; devices may file them (matched, ignored) but never
-      // invent one or change what the bank said
-      if (!cur || r.table !== '_collect') continue;
-      r = { ...r, deleted: false, data: { ...(r.data || {}), ...Object.fromEntries(BANK_FIELDS.map((k) => [k, cur.data[k]])) } };
-    }
-    doc.records[r.id] = { ...r, _seq: ++doc.seq };
-    accepted.add(r.id);
-    changed = true;
-  }
+  // the app definition first: it says which fields are money ledgers and which are computed
   let appOut = null;
   if (body.app && typeof body.app === 'object' && body.app.updated && (!doc.app || body.app.updated > doc.app.updated)) {
     doc.app = body.app; doc.seq++; changed = true;
   } else if (doc.app && doc.app.updated > (body.appUpdated || '')) appOut = doc.app;
 
+  for (let r of Array.isArray(body.records) ? body.records : []) {
+    if (!r || typeof r.id !== 'string' || typeof r.table !== 'string' || typeof r.updated !== 'string') continue;
+    const cur = doc.records[r.id];
+    if (r.table === '_collect' || cur?.table === '_collect') {
+      // bank confirmations are created only by the webhook; devices may file them (matched, ignored) but never
+      // invent one or change what the bank said
+      if (!cur || r.table !== '_collect' || cur.updated >= r.updated) continue;
+      r = { ...r, deleted: false, data: { ...(r.data || {}), ...Object.fromEntries(BANK_FIELDS.map((k) => [k, cur.data[k]])) } };
+      doc.records[r.id] = { ...r, _seq: ++doc.seq };
+      accepted.add(r.id); changed = true;
+      continue;
+    }
+    if (!cur) { doc.records[r.id] = { ...r, _seq: ++doc.seq }; accepted.add(r.id); changed = true; continue; }
+    // never "newest copy wins" for a whole record: merge (public/js/ledger.js). Payments from both copies are kept,
+    // a repeated delivery adds nothing, and edits that did not see each other leave a conflict note on the record.
+    const { _seq, ...held } = cur;
+    const m = mergeRecords(held, r, { derived: derivedFieldsOf(doc.app, r.table), ledger: ledgerFieldsOf(doc.app, r.table), tie: 'b' });
+    if (!m.changedA) {
+      if (m.changedB) resend.set(r.id, held);             // the device is missing something the server has
+      continue;
+    }
+    const merged = m.changedB ? recompute(doc, m.record) : m.record;
+    doc.records[r.id] = { ...merged, _seq: ++doc.seq };
+    if (!m.changedB) accepted.add(r.id);                   // otherwise it goes back so the device gets the combination
+    changed = true;
+  }
+
   const since = Number(body.since) || 0;
-  const records = [];
+  const records = [...resend.values()];
   for (const r of Object.values(doc.records)) {
-    if (r._seq > since && !accepted.has(r.id)) { const { _seq, ...rest } = r; records.push(rest); }
+    if (r._seq > since && !accepted.has(r.id) && !resend.has(r.id)) { const { _seq, ...rest } = r; records.push(rest); }
   }
   if (changed) { persist(doc.ws, doc); notify(doc.ws, doc.seq); }
-  return { status: 200, json: { ok: true, seq: doc.seq, records, app: appOut } };
+  return { status: 200, json: { ok: true, seq: doc.seq, records, app: appOut, ws: doc.ws, ...(a.weak ? { weak: true } : {}) } };
 }
 
 // ---- live channel: devices hold one streaming response open and are told the moment anything changes -----------
@@ -227,7 +336,7 @@ function handleCollectSetup(body, ip) {
 }
 function handleCollectHook(id, raw, headers, ip) {
   const key = `hook|${ip}`;
-  if (limited(key)) return { status: 429, error: 'Too many attempts' };
+  if (limited(key, PER_IP)) return { status: 429, error: 'Too many attempts' };
   const ws = hookIndex[id];
   const doc = ws ? load(ws) : null;
   if (!doc?.collect || doc.collect.id !== id) { noteFail(key); return { status: 404, error: 'Unknown hook' }; }
@@ -304,9 +413,9 @@ const server = http.createServer(async (req, res) => {
       }
       const body = parseJson(raw);
       if (url.pathname === '/api/live') return handleLive(body, ip, req, res, cors);
-      const routes = { '/api/sync': handleSync, '/api/export': handleExport, '/api/collect/setup': handleCollectSetup, '/api/collect/simulate': handleCollectSimulate };
+      const routes = { '/api/sync': handleSync, '/api/export': handleExport, '/api/passphrase': handlePassphrase, '/api/collect/setup': handleCollectSetup, '/api/collect/simulate': handleCollectSimulate };
       const out = routes[url.pathname] ? routes[url.pathname](body, ip) : { status: 404, error: 'Not found' };
-      return send(res, out.status, JSON.stringify(out.json || { error: out.error }), { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      return send(res, out.status, JSON.stringify(out.json || { error: out.error, ...(out.code ? { code: out.code } : {}) }), { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     }
     // static files
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
@@ -332,6 +441,7 @@ export function start(port = PORT, host = HOST) {
   return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
 }
 export { server };
+export { authenticate as _authenticate };   // tests: guessing from many addresses without needing many addresses
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   start().then(() => {
@@ -339,5 +449,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.log(`Vina is running.\n  On this computer:  http://localhost:${PORT}`);
     for (const ip of ips) console.log(`  On your Wi-Fi:     http://${ip}:${PORT}   (phones on the same Wi-Fi can open this)`);
     console.log(`Data is kept in ${DATA_DIR}\nTip: the app installs and works offline only from https:// or localhost. See README.`);
+    console.log(SETUP_CODE ? `Setup code for connecting a shop's first device: ${SETUP_CODE}   (other devices only need the workspace name and passphrase)` : 'New workspaces are turned off (ALLOW_NEW_WORKSPACES=false).');
   });
 }

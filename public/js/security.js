@@ -63,3 +63,30 @@ export async function decryptJson(box, pass) {
     return JSON.parse(dec.decode(plain));
   } catch { throw new Error('Wrong passphrase, or the file is damaged'); }
 }
+
+// ---- sync passphrases and workspace names (shared by the devices and the sync server) -----------------------------
+/** Workspace names are matched without case or extra spaces: "Sharma Store" and "sharma-store" are one shop. */
+export const workspaceKey = (ws) => String(ws || '').trim().toLowerCase().replace(/\s+/g, '-');
+export const WORKSPACE_MIN = 3, WORKSPACE_MAX = 64, PASSPHRASE_MIN = 10;
+const COMMON = ['password', 'passphrase', 'passwd', 'qwerty', 'asdfgh', '123456', '654321', 'abcdef', 'letmein', 'welcome', 'iloveyou', 'admin'];
+/**
+ * Why a passphrase is too weak to protect a shop's books on a server others can reach, or null if it is fine:
+ * 'short' (under 10 characters), 'simple' (fewer than 5 different characters) or 'guessable' (a common password or
+ * the workspace name inside it). Only new workspaces and changed passphrases must pass; older ones keep working and
+ * are flagged.
+ */
+export function passphraseProblem(pass, ws = '') {
+  const p = String(pass || '');
+  if (p.length < PASSPHRASE_MIN) return 'short';
+  if (new Set(p.toLowerCase()).size < 5) return 'simple';
+  const low = p.toLowerCase().replace(/[\s_-]+/g, '');
+  const name = workspaceKey(ws).replace(/-/g, '');
+  if (COMMON.some((w) => low.includes(w)) || (name.length >= 3 && low.includes(name))) return 'guessable';
+  return null;
+}
+/** A random passphrase that is easy to read out and type on a phone: 3 groups of 4 (about 60 bits). */
+export function suggestPassphrase() {
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';   // no 0/o, 1/l/i
+  const r = crypto.getRandomValues(new Uint32Array(12));
+  return [0, 1, 2].map((g) => [0, 1, 2, 3].map((i) => abc[r[g * 4 + i] % abc.length]).join('')).join('-');
+}

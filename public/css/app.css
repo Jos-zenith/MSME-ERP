@@ -50,7 +50,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 .muted { color: var(--muted); } .center { text-align: center; } .small { font-size: .85rem; } .pre { white-space: pre-wrap; } .mono { font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
 .spacer { flex: 1; } .num { text-align: right; font-variant-numeric: tabular-nums; }
-.hint { color: var(--muted); font-size: .8rem; margin-top: .25rem; } .hint.bad { color: var(--bad); } .hint.good { color: var(--good); }
+.hint { color: var(--muted); font-size: .8rem; margin-top: .25rem; } .hint.bad { color: var(--bad); } .hint.good { color: var(--good); } .hint.warn { color: var(--warn); }
 kbd { font: 600 .68rem/1.5 ui-monospace, Consolas, monospace; border: 1px solid var(--line-2); border-bottom-width: 2px; border-radius: 4px; padding: 0 .4em; margin-left: .5em; background: var(--surface-2); color: var(--ink-2); }
 .boot { padding: 3rem; text-align: center; color: var(--muted); }
 .i { display: inline-flex; flex: none; line-height: 0; } .i svg { display: block; } .i-emoji { font-size: 1rem; line-height: 1; width: 18px; justify-content: center; }
@@ -505,3 +505,7 @@ body.pos-mode .content { max-width: none; padding: .8rem 1rem 1rem; } body.pos-m
 @media (max-width: 1180px) { .pp-top { grid-template-columns: 1fr 1fr; } .pp-top > .pp-score { grid-column: span 2; } }
 @media (max-width: 860px) { .pp-top, .pp-two { grid-template-columns: 1fr; } .pp-top > .pp-score { grid-column: auto; } .pp-factors td:last-child { width: auto; } }
 @media print { .passport .page-actions, .passport .chart-foot { display: none; } .passport .card { break-inside: avoid; box-shadow: none; } }
+
+/* ---- sync conflicts and payment history ------------------------------------------------------------------------------- */
+.conflict-banner { align-items: flex-start; } .conflict-banner ul { margin: .3rem 0 0; padding-left: 1.1rem; } .conflict-banner li { margin: .15rem 0; }
+.reversals td:not(.num) { color: var(--ink-2); } .reversals td.num { text-decoration: line-through; color: var(--muted); }

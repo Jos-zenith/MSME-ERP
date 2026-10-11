@@ -1,6 +1,6 @@
 // Retail / kirana starter: customers, items & stock, sales invoices with payments, purchases, tasks,
 // plus the workflows and dashboards a shop owner needs on day one.
-import { F, baseSettings, tasksTable, STATUS_COLORS, makeApp, cond, collectedToday, billedToday, pendingSub, walkInSale } from './common.js';
+import { F, baseSettings, tasksTable, STATUS_COLORS, makeApp, cond, collectedToday, billedToday, pendingSub, walkInSale, stockMovesField } from './common.js';
 import { todayStr, addDays } from '../formula.js';
 
 export function retail(t, o = {}) {
@@ -44,9 +44,10 @@ export function retail(t, o = {}) {
       F('price', t('Selling price'), 'money', { required: true, width: 'third' }),
       F('cost', t('Buying price'), 'money', { width: 'third' }),
       F('tax', t('Tax %'), 'number', { default: 0, width: 'third' }),
-      F('stock', t('Stock in hand'), 'number', { default: 0, width: 'third' }),
+      F('stock', t('Stock in hand'), 'number', { default: 0, width: 'third', moves: 'stock_moves' }),
       F('reorder', t('Reorder level'), 'number', { default: 5, width: 'third', hint: t('You get an alert when stock falls to this level') }),
       F('stock_value', t('Stock value'), 'money', { formula: 'stock * cost' }),
+      stockMovesField(t),   // every sale, purchase and correction as its own row: merges across devices
     ],
   };
 
@@ -78,7 +79,7 @@ export function retail(t, o = {}) {
       F('discount', t('Extra discount'), 'money', { default: 0, width: 'half' }),
       F('total', t('Total'), 'money', { formula: 'subtotal + tax_total - discount', big: true }),
       F('payments', t('Payments received'), 'lines', {
-        quickAdd: payPresets,
+        quickAdd: payPresets, ledger: true,   // money rows: append-only, merged across devices (ledger.js)
         columns: [
           F('pdate', t('Date'), 'date', { default: 'today' }),
           F('mode', t('Mode'), 'select', { options: [cash, upi, card, bank], default: cash }),

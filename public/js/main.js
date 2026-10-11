@@ -17,7 +17,7 @@ import { posView, posTable } from './views/pos.js';
 import { emptyState } from './ui/bits.js';
 import { canSee } from './views/data.js';
 import { gstReturnsView, usesGst } from '../gst/js/ui.js';
-import { upgradeCounter } from './templates/common.js';
+import { upgradeCounter, upgradeStock } from './templates/common.js';
 import { upgradeCollect, reconcileAll, collectSetup, COLLECT_TABLE } from './collect.js';
 import { passportView } from './views/passport.js';
 import { fmtMoney } from './schema.js';
@@ -356,6 +356,7 @@ async function boot() {
   await setLang(LANGS[saved] ? saved : 'en');
   if (hasApp && upgradeCounter(store.app, t)) store.setApp(store.app);   // after setLang: new titles in the shop's language
   if (hasApp && upgradeCollect(store.app, t)) store.setApp(store.app);
+  if (hasApp && upgradeStock(store.app, t)) store.setApp(store.app);    // stock as movements, so it merges across devices
   applyTheme();
   sync.start();
   registerSW();

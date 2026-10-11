@@ -1,6 +1,9 @@
 // Offline-first sync. Everything is saved on the device first; when a connection exists, changes are exchanged with
-// your own sync server (server/server.js). Conflict rule: per record, the most recent edit wins.
-// Config lives in store.meta.sync = { url, ws, token, since, enabled }.
+// your own sync server (server/server.js). Records merge on the server and on each device (ledger.js).
+// Config lives in store.meta.sync = { url, ws, token, since, enabled }, plus for the first run `adopt` (download the
+// shop) or `create` + `setupCode` (make a new workspace), `refused` once the server turned the passphrase down (no more
+// automatic tries until someone types it again) and `weak` (works, but would not be accepted for a new workspace).
+const REFUSED = 'The server did not accept the workspace name / passphrase';
 
 export class Sync {
   constructor(store, { fetchFn = globalThis.fetch?.bind(globalThis), pushDelay = 800 } = {}) {
@@ -25,9 +28,9 @@ export class Sync {
   _emit() { for (const fn of this.listeners) fn(this); }
   _set(status, error = '') { this.status = status; this.error = error; this._emit(); }
 
-  configure({ url, ws, token, adopt = false }) {
+  configure({ url, ws, token, adopt = false, create = false, setupCode = '' }) {
     url = String(url).trim().replace(/\/+$/, '');
-    this.store.meta.sync = { url, ws: ws.trim(), token, since: 0, enabled: true, ...(adopt ? { adopt: true } : {}) };
+    this.store.meta.sync = { url, ws: ws.trim(), token, since: 0, enabled: true, ...(adopt ? { adopt: true } : create ? { create: true, setupCode: String(setupCode).trim() } : {}) };
     this.store._persistMeta('sync');
     if (this.timer) { this.stopLive(); this.connectLive(); }
   }
@@ -53,7 +56,8 @@ export class Sync {
   /** Hold a streaming request open; the server writes `data: {"seq":n}` whenever any device saves something. */
   async connectLive() {
     const cfg = this.config;
-    if (!cfg?.enabled || !this.fetch || this._liveCtl) return;
+    // not before the first sync: that one creates the workspace or downloads the shop (and a refusal must come from it)
+    if (!cfg?.enabled || cfg.refused || cfg.create || cfg.adopt || !this.fetch || this._liveCtl) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
     clearTimeout(this._liveRetry);
     const ctl = this._liveCtl = new AbortController();
@@ -62,6 +66,7 @@ export class Sync {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ws: cfg.ws, token: cfg.token }), signal: ctl.signal, cache: 'no-store',
       });
+      if (res.status === 403) { this._refuse(REFUSED); throw new Error('refused'); }
       if (!res.ok || !res.body?.getReader) throw new Error(`live ${res.status}`);
       this.live = true; this._liveBackoff = 1000; this._emit();
       const reader = res.body.getReader();
@@ -84,7 +89,7 @@ export class Sync {
     const wasMine = this._liveCtl === ctl;
     if (wasMine) this._liveCtl = null;
     if (this.live) { this.live = false; this._emit(); }
-    if (wasMine && !ctl.signal.aborted && this.config?.enabled) {
+    if (wasMine && !ctl.signal.aborted && this.config?.enabled && !this.config.refused) {
       this._liveRetry = setTimeout(() => this.connectLive(), this._liveBackoff);
       this._liveBackoff = Math.min(this._liveBackoff * 2, 30000);
     }
@@ -93,6 +98,27 @@ export class Sync {
     clearTimeout(this._liveRetry);
     this._liveCtl?.abort(); this._liveCtl = null;
     if (this.live) { this.live = false; this._emit(); }
+  }
+
+  /** The server turned the passphrase down: stop trying by ourselves (each try would count as a guess) until it is typed again. */
+  _refuse(message) {
+    const cfg = this.config;
+    if (cfg && !cfg.refused) { cfg.refused = true; this.store._persistMeta('sync'); }
+    this.stopLive();
+    this._set('error', message);
+  }
+
+  /**
+   * Change the workspace passphrase for every device (a phone was lost, someone left). This device keeps working; the
+   * others stop syncing until the new passphrase is typed on them.
+   */
+  async changePassphrase(newToken) {
+    await this._post('/api/passphrase', { newToken });
+    this.config.token = newToken;
+    delete this.config.weak;
+    this.store._persistMeta('sync');
+    if (this.timer) { this.stopLive(); this.connectLive(); }
+    this._emit();
   }
 
   // ---- Smart Collect: the payment webhook lives on the sync server --------------------------------------------------------
@@ -114,12 +140,21 @@ export class Sync {
     return this._post('/api/collect/simulate', { amount, ref, vpa, name, phone, utr });
   }
 
-  async run() {
+  /**
+   * Exchange changes with the server. Called while a sync is under way (a live notice, a save, "Sync now"), it waits
+   * for that one and then goes round once more, so what it returns includes everything up to the moment it was called.
+   */
+  run() {
+    if (this._current) return (this._next ||= this._current.then(() => { this._next = null; return this.run(); }));
+    this._current = this._runOnce().finally(() => { this._current = null; });
+    return this._current;
+  }
+
+  async _runOnce() {
     const cfg = this.config;
     if (!cfg?.enabled || !this.fetch) return { skipped: true };
-    if (this.running) { this._again = true; return { skipped: true }; }
+    if (cfg.refused) return { error: this.error || REFUSED };
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { this._set('offline'); return { skipped: true }; }
-    this.running = true;
     this._set('syncing');
     try {
       const store = this.store;
@@ -128,12 +163,18 @@ export class Sync {
       const appDirty = !!store.meta.appDirty;
       const body = {
         ws: cfg.ws, token: cfg.token, since: cfg.since || 0,
-        records: dirty.map(({ id, table, data, created, updated, deleted, approval, by }) => ({ id, table, data, created, updated, deleted: !!deleted, approval, by })),
+        records: dirty.map(({ id, table, data, created, updated, deleted, approval, by, vv }) => ({ id, table, data, created, updated, deleted: !!deleted, approval, by, vv })),
         appUpdated: store.app?.updated || '',
         app: !cfg.adopt && (appDirty || !cfg.since) ? store.app : null,
+        ...(cfg.create ? { create: true, setupCode: cfg.setupCode || '' } : {}),
       };
       const res = await this.fetch(`${cfg.url}/api/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (res.status === 401 || res.status === 403) throw new Error('The server did not accept the workspace name / passphrase');
+      if (res.status === 401 || res.status === 403 || res.status === 400) {
+        const why = (await res.json().catch(() => ({}))).error;
+        const msg = res.status === 403 && (!why || /passphrase/.test(why)) ? REFUSED : why || REFUSED;
+        this._refuse(msg);
+        throw Object.assign(new Error(msg), { shown: true });
+      }
       if (res.status === 429) throw new Error('Too many attempts. Wait a minute and try again');
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const out = await res.json();
@@ -144,19 +185,18 @@ export class Sync {
       for (const r of out.records || []) if (store.applyRemote(r)) pulled++;
       if (out.app && (adopting || !store.app || out.app.updated > store.app.updated)) { store.setApp(out.app, { fromSync: true }); store.meta.appDirty = false; store._persistMeta('appDirty'); }
       cfg.since = out.seq;
-      delete cfg.adopt;
+      const first = !!(cfg.adopt || cfg.create);
+      delete cfg.adopt; delete cfg.create; delete cfg.setupCode;   // the setup code is only for creating the workspace
+      if (out.weak) cfg.weak = true; else delete cfg.weak;
       store._persistMeta('sync');
       this.lastAt = new Date();
       this._set('idle');
+      if (first && this.timer) this.connectLive();
       return { pushed: dirty.length, pulled };
     } catch (e) {
       const offline = e instanceof TypeError; // fetch failed: no network / server unreachable
-      this._set(offline ? 'offline' : 'error', offline ? '' : e.message);
+      if (!e.shown) this._set(offline ? 'offline' : 'error', offline ? '' : e.message);
       return { error: e.message };
-    } finally {
-      this.running = false;
-      // something changed while we were busy (a live notice or a local save): go round once more
-      if (this._again) { this._again = false; if (this.status === 'idle') queueMicrotask(() => this.run()); }
     }
   }
 }

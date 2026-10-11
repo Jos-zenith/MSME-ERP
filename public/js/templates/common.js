@@ -2,6 +2,39 @@
 // so a Hindi-speaking owner gets Hindi field names from the very first screen.
 export const F = (id, label, type = 'text', extra = {}) => ({ id, label, type, ...extra });
 
+/**
+ * Stock kept as a ledger of movements (ledger.js): every sale, purchase, return and correction is a row with its own
+ * id, so offline sales of one item on two devices both count after sync. The stock field (`moves: 'stock_moves'`) is
+ * the sum of the rows; typing a new number adds a correction row. Hidden: the item page shows it as stock history.
+ */
+export const stockMovesField = (t) => F('stock_moves', t('Stock history'), 'lines', {
+  ledger: true, hidden: true, rowKey: 'qty',
+  columns: [F('qty', t('Change'), 'number'), F('kind', t('Why'), 'text', { hidden: true }), F('src', t('From'), 'text', { hidden: true }),
+    F('src_table', 'src_table', 'text', { hidden: true }), F('rule', 'rule', 'text', { hidden: true })],
+});
+
+/**
+ * Shops set up before stock had movements, and tables made in the App builder: every number field a stock workflow
+ * (adjust_stock) writes to is kept as movements from now on. Its current number becomes the opening row the first time
+ * each item is saved. Safe to run on every start; returns true if it changed the app.
+ */
+export function upgradeStock(app, t) {
+  let changed = false;
+  for (const rule of app?.rules || []) for (const a of rule.actions || []) {
+    if (a.type !== 'adjust_stock' || !a.targetField) continue;
+    const lines = app.tables.find((x) => x.id === rule.table)?.fields.find((f) => f.id === a.linesField);
+    const items = app.tables.find((x) => x.id === lines?.columns?.find((c) => c.id === a.itemColumn)?.ref);
+    const target = items?.fields.find((f) => f.id === a.targetField && f.type === 'number' && !f.formula);
+    if (!target || target.moves) continue;
+    const id = items.fields.some((f) => f.id === 'stock_moves') ? `${target.id}_moves` : 'stock_moves';
+    if (items.fields.some((f) => f.id === id)) continue;
+    items.fields.push({ ...stockMovesField(t), id });
+    target.moves = id;
+    changed = true;
+  }
+  return changed;
+}
+
 export function baseSettings(t, o = {}) {
   return {
     lang: o.lang || 'en',
@@ -35,7 +68,7 @@ export const STATUS_COLORS = (good = [], warn = [], bad = [], info = []) => {
 };
 
 export function makeApp({ name, template, settings, tables, rules, dashboards }) {
-  return { v: 1, accessV: 1, counterV: 1, collectV: 1, name, template, settings, tables, rules, dashboards, updated: new Date().toISOString() };
+  return { v: 1, accessV: 1, counterV: 1, collectV: 2, name, template, settings, tables, rules, dashboards, updated: new Date().toISOString() };
 }
 
 export const cond = (field, op, value, vt = 'value') => ({ field, op, value, vt });

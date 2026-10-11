@@ -126,6 +126,7 @@ Turn on, see the webhook URL and signing secret (copy and rotate), toggle sandbo
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Provider does not return `tr` for on-device QRs | Medium | High | Confirm in the sandbox (open question 1). Fallback: dynamic QR via the provider API when online, static QR + phone matching when offline. |
+| A payment recorded on another device is overwritten (record-level last-write-wins sync) | Medium with 2+ devices offline | **High**: money silently disappears from the books | **Fixed 2026-10-10** (ledger.js): permanent row ids, append-only reversals, merge on sync, totals recomputed, conflict notes. 13 unit + 1 browser test. Same class, stock levels: **fixed 2026-10-11**, stock is a ledger of movements (8 more unit tests; the browser test also sells on both devices). Remaining: one bill changed differently on two devices at once (flagged); stock history grows without compaction |
 | Lost webhook | Low | Medium | R12 reconciliation sweep, plus the unverified list makes it visible. |
 | Wrong match | Low (by design) | High | Conservative auto-apply, hold for reference-carrying events, owner queue, full audit trail with UTR. |
 | Server not reachable from the internet | High for self-hosters | High | Docs cover HTTPS tunnels. The hosted option is the commercial path. |

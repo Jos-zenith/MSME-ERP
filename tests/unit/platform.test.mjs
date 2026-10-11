@@ -115,6 +115,7 @@ test('sync server: two devices converge, last edit wins, wrong passphrase refuse
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-sync-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?sync=${Date.now()}`);
+  const setupCode = mod.SETUP_CODE;
   const server = await mod.start(0, '127.0.0.1');
   const url = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -127,10 +128,10 @@ test('sync server: two devices converge, last edit wins, wrong passphrase refuse
     const A = await mk('A'), B = await mk('B');
     A.s.setApp(buildTemplate('retail', (x) => x, { businessName: 'Sync Mart' }));
     const c = (await A.s.saveRecord('customers', { name: 'Asha', phone: '9000000001' })).record;
-    A.sync.configure({ url, ws: 'shop', token: 'passphrase' });
+    A.sync.configure({ url, ws: 'shop', token: 'counter-key-42', create: true, setupCode });
     assert.equal((await A.sync.run()).error, undefined);
 
-    B.sync.configure({ url, ws: 'shop', token: 'passphrase', adopt: true });
+    B.sync.configure({ url, ws: 'shop', token: 'counter-key-42', adopt: true });
     assert.equal((await B.sync.run()).error, undefined);
     assert.equal(B.s.app.name, 'Sync Mart');
     assert.equal(B.s.getRecord('customers', c.id).data.name, 'Asha');
@@ -163,6 +164,7 @@ test('live sync: a change saved on one device reaches the other in about a secon
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-live-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?live=${Date.now()}`);
+  const setupCode = mod.SETUP_CODE;
   const server = await mod.start(0, '127.0.0.1');
   const url = `http://127.0.0.1:${server.address().port}`;
   const waitFor = async (fn, ms = 3000) => { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await new Promise((r) => setTimeout(r, 25)); } return false; };
@@ -175,9 +177,9 @@ test('live sync: a change saved on one device reaches the other in about a secon
   const A = await mk(), B = await mk();
   try {
     A.s.setApp(buildTemplate('retail', (x) => x, { businessName: 'Live Mart' }));
-    A.sync.configure({ url, ws: 'live', token: 'passphrase' });
+    A.sync.configure({ url, ws: 'live', token: 'counter-key-42', create: true, setupCode });
     await A.sync.run();
-    B.sync.configure({ url, ws: 'live', token: 'passphrase', adopt: true });
+    B.sync.configure({ url, ws: 'live', token: 'counter-key-42', adopt: true });
     await B.sync.run();
 
     // B listens on the live feed only: no interval, no manual run()

@@ -214,6 +214,12 @@ export function computeRecord(table, data, ctx) {
       }
     }
   }
+  // a number kept as a ledger of movements (stock, `moves`: the lines field): the sum of its rows. A record with no
+  // rows yet (saved before stock had movements) keeps the number it has.
+  for (const f of table.fields.filter((x) => x.moves)) {
+    const rows = d[f.moves] || [];
+    if (rows.length || (d[`${f.moves}__void`] || []).length) d[f.id] = round(rows.reduce((s, r) => s + toNum(r.qty), 0), 3);
+  }
   const computed = table.fields.filter((f) => f.formula);
   for (let pass = 0; pass < 3; pass++) {
     for (const f of computed) {

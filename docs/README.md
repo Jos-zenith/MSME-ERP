@@ -21,6 +21,6 @@ provider at the webhook URL. No provider credentials are in this repository.
 Tests that back the claims in these docs:
 
 ```
-npm test                          # 89 unit tests; tests/unit/collect.test.mjs and credit.test.mjs cover this work
-npm run test:e2e                  # 27 browser scenarios; the last three cover Smart Collect and the Credit Passport
+npm test                          # 116 unit tests; collect, credit, ledger (payments and stock across devices) and accounts (sync passphrases) .test.mjs cover this work
+npm run test:e2e                  # 29 browser scenarios; the last five cover Smart Collect, the Credit Passport, payments and stock on two offline browsers, and sync accounts
 ```

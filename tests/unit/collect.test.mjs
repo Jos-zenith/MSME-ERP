@@ -187,12 +187,13 @@ test('collect server: signed webhook -> record on every device; bad signatures, 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vina-collect-'));
   process.env.DATA_DIR = dir;
   const mod = await import(`../../server/server.js?collect=${Date.now()}`);
+  const setupCode = mod.SETUP_CODE;
   const server = await mod.start(0, '127.0.0.1');
   const url = `http://127.0.0.1:${server.address().port}`;
   try {
     const { store, bill } = await shop();
     const sync = new Sync(store);
-    sync.configure({ url, ws: 'collect-shop', token: 'secret-pass' });
+    sync.configure({ url, ws: 'collect-shop', token: 'secret-pass', create: true, setupCode });
     await sync.run();
     const inv = await bill(2);
     await sync.run();

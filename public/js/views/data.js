@@ -69,7 +69,8 @@ export function homeView(ctx) {
             attn('alert', t('Alerts'), alerts, '#/outbox/alerts', 'alerts'),
             attn('pen', t('Waiting for your approval'), approvals, '#/outbox/approvals', 'approvals'),
             tasksTbl ? attn('tasks', t('Tasks due'), tasksDue, '#/t/tasks', 'tasks') : null,
-            collectOn(store) ? attn('wallet', t('Payments to check'), paymentsAttention(store), '#/outbox/payments', 'payments') : null),
+            collectOn(store) ? attn('wallet', t('Payments to check'), paymentsAttention(store), '#/outbox/payments', 'payments') : null,
+            conflictsAttn(store)),
           ctx.role === 'owner' ? gstHomeCard(store) : null)),
       !store.app.tables.length ? emptyState('🧱', t('Nothing here yet'), t('Open the App builder to create your first table.'), h('a.btn.primary', { href: '#/build' }, t('App builder'))) : null,
     );
@@ -77,6 +78,12 @@ export function homeView(ctx) {
   paint();
   ctx.watch(debounce(paint, 60));
   return el;
+}
+/** Records changed on two devices at once that the owner has not checked yet (the first one opens). */
+function conflictsAttn(store) {
+  const list = store.conflicted();
+  if (!list.length) return null;
+  return attn('alert', t('Changed on two devices'), list.length, `#/t/${list[0].table}/${list[0].id}`, 'conflicts');
 }
 const attn = (ic, label, n, href, key) => h('a.attn-card', { href, class: n ? 'has' : '', dataset: { key } }, icon(ic), h('span.l', label), h('span.n', String(n)), icon('chevron', { size: 16 }));
 
@@ -294,6 +301,14 @@ export function recordView(ctx, tableId, id, query) {
           h('button.btn.small', { onclick: () => store.decideApproval(tableId, id, 'rejected', ctx.userName) }, t('Reject'))) : null));
     }
 
+    // changed on two devices at the same time: say what was kept, never resolve it silently (ledger.js)
+    const open = (d.__conflicts || []).filter((c) => !c.resolved);
+    if (open.length) {
+      el.append(h('div.banner.warn.conflict-banner', { role: 'alert' },
+        h('div', h('b', t('Changed on two devices at the same time')), h('ul', open.map((c) => h('li', conflictText(store, table, c))))),
+        ctx.role === 'owner' ? h('span.banner-actions', h('button.btn.small', { onclick: () => store.resolveConflicts(tableId, id) }, icon('check', { size: 14 }), t('Checked'))) : null));
+    }
+
     // what to do next: collect money, send the message, print
     if (query.done || msgs.length || actions.length) {
       const nextBtns = h('div.next-actions',
@@ -315,17 +330,73 @@ export function recordView(ctx, tableId, id, query) {
     const plain = table.fields.filter((f) => f.type !== 'lines' && !f.hidden && !(f.hideZero && !toNum(d[f.id]))
       && !(f.showIf && !isTruthy(tryEvaluate(f.showIf, scope, true))));
     el.append(h('section.card', h('dl.details', plain.map((f) => h('div', h('dt', f.label), h('dd', valueNode(store, f, d[f.id], { rec })))))));
-    for (const f of table.fields.filter((x) => x.type === 'lines')) {
+    for (const f of table.fields.filter((x) => x.type === 'lines' && !x.hidden)) {
       const cols = f.columns.filter((c) => !c.hidden);
       if (!(d[f.id] || []).length) continue;
       el.append(h('section.card', h('h3', f.label), h('div.table-wrap', h('table.data',
         h('thead', h('tr', h('th', '#'), cols.map((c) => h('th', { class: c.type === 'money' || c.type === 'number' ? 'num' : '' }, c.label)))),
         h('tbody', d[f.id].map((r, i) => h('tr', h('td', String(i + 1)), cols.map((c) => h('td', { class: c.type === 'money' || c.type === 'number' ? 'num' : '', dataset: { label: c.label } }, valueNode(store, c, r[c.id]))))))))));
     }
+    // payments are never deleted: corrected and removed ones stay visible as reversals
+    for (const f of store.ledgerFields(table).filter((x) => !x.hidden)) {
+      const voids = d[`${f.id}__void`] || [];
+      if (!voids.length) continue;
+      const cols = f.columns.filter((c) => !c.hidden);
+      const num = (c) => (c.type === 'money' || c.type === 'number' ? 'num' : '');
+      el.append(h('section.card.reversals', h('h3', `${t('Reversed')}: ${f.label}`),
+        h('p.hint', t('Payments are never deleted. A corrected or removed payment stays here, and does not count.')),
+        h('div.table-wrap', h('table.data.compact',
+          h('thead', h('tr', cols.map((c) => h('th', { class: num(c) }, c.label)), h('th', t('Why')), h('th', t('When')))),
+          h('tbody', voids.map((v) => h('tr', cols.map((c) => h('td', { class: num(c), dataset: { label: c.label } }, valueNode(store, c, v[c.id]))),
+            h('td', { dataset: { label: t('Why') } }, reversalReason(v._void)),
+            h('td.muted', { dataset: { label: t('When') } }, v._void?.at ? new Date(v._void.at).toLocaleString() : '—'))))))));
+    }
+    // stock is a ledger of movements: show where it went, newest first (sales on every device are here)
+    for (const f of store.stockFields(table)) {
+      const rows = [...(d[f.moves] || [])].sort((x, y) => String(y._at || '').localeCompare(String(x._at || ''))).slice(0, 30);
+      if (!rows.length) continue;
+      el.append(h('section.card.stock-history', h('h3', fieldOf(table, f.moves)?.label || t('Stock history')),
+        h('div.table-wrap', h('table.data.compact',
+          h('thead', h('tr', h('th', t('When')), h('th', t('Why')), h('th.num', t('Change')))),
+          h('tbody', rows.map((r) => h('tr',
+            h('td.muted', { dataset: { label: t('When') } }, r._at ? new Date(r._at).toLocaleString() : '—'),
+            h('td', { dataset: { label: t('Why') } }, moveReason(store, r)),
+            h('td.num', { dataset: { label: t('Change') } }, `${toNum(r.qty) > 0 ? '+' : ''}${formatValue({ type: 'number' }, r.qty)}`))))))));
+    }
   };
   paint();
   ctx.watch((e) => { if (e.type === 'record' && e.id !== id && e.table !== tableId) return; paint(); });
   return el;
+}
+
+/** One stock movement in words: the bill it came from (a link), a correction by hand, or the opening stock. */
+function moveReason(store, r) {
+  if (r.kind === 'opening') return t('Opening stock');
+  if (r.kind === 'adjust') return `${t('Corrected by hand')}${r._by ? ` · ${who(r._by)}` : ''}`;
+  const tb = store.table(r.src_table), src = tb && store.byTable.get(tb.id)?.get(r.src);
+  if (!src) return tb?.name || '—';
+  return h('a', { href: `#/t/${tb.id}/${src.id}` }, `${tb.name}: ${recordTitle(tb, src)}${src.deleted ? ` (${t('deleted')})` : ''}`);
+}
+
+const REASONS = () => ({
+  edited: t('Corrected'), removed: t('Removed'),
+  'same bank payment recorded twice': t('Same bank payment recorded twice'), 'same payment as a counter entry': t('Same payment as the counter entry'),
+});
+const who = (by) => (by === 'staff' ? t('Staff') : by === 'owner' ? t('Owner') : by);
+const reversalReason = (v) => `${REASONS()[v?.reason] || v?.reason || ''}${v?.by && !v.auto ? ` · ${who(v.by)}` : ''}`;
+/** One conflict note in words: what happened, and what was kept. */
+function conflictText(store, table, c) {
+  const show = (fid, v) => { const f = fieldOf(table, fid); return v === null || v === undefined || v === '' ? '—' : f ? formatValue(f, v, store.ctx()) : String(v); };
+  switch (c.kind) {
+    case 'edit': return Object.entries(c.fields || {}).map(([fid, x]) => t('{field}: kept “{kept}”; the other device had “{lost}”', { field: fieldOf(table, fid)?.label || fid, kept: show(fid, x.kept), lost: show(fid, x.lost) })).join(' · ');
+    case 'restored': return t('It was deleted on one device while a payment was recorded on another. It was kept, so the payment is not lost.');
+    case 'delete-undone': return t('It was deleted on one device but changed on another, so it was kept.');
+    case 'corrected-twice': return t('One payment was corrected differently on two devices. Both corrections count for now: check the payments and remove the wrong one.');
+    case 'edited-after-reversal': return t('A payment was changed here after another device had removed it. The new amount was kept as a new payment: check it.');
+    case 'row': if (table.fields.some((f) => f.moves === c.field)) return t('A bill with this item was changed differently on two devices at once, so this stock may be off by the difference. Count it and correct the number.');
+      return t('Two devices disagree about a payment. Check the payments below.');
+    default: return t('Two devices disagree about a payment. Check the payments below.');
+  }
 }
 
 // ---- print -----------------------------------------------------------------------------------------------

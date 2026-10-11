@@ -187,7 +187,7 @@ export async function applyMatch(store, evtRec, m, { by = 'auto' } = {}) {
     if (!rec) continue;
     const rows = rec.data[cfg.pay.id] || [];
     if (cfg.ref && rows.some((r) => r[cfg.ref.id] === e.utr)) continue;
-    const row = { ...newRow(cfg.pay), [cfg.amount.id]: a.amount, [cfg.mode.id]: cfg.upiMode };
+    const row = { ...newRow(cfg.pay), [cfg.amount.id]: a.amount, [cfg.mode.id]: cfg.upiMode, _src: 'bank' };
     if (cfg.date) row[cfg.date.id] = pdate;
     if (cfg.ref) row[cfg.ref.id] = e.utr;
     // rules run: the bill turns Paid and the usual "payment received" WhatsApp receipt is queued
@@ -286,13 +286,15 @@ export function collectStats(store, { days = 30, today = todayStr() } = {}) {
 }
 
 /**
- * Shops set up before Smart Collect get a "UTR / ref" column on their payments list (once). Used for the bank
+ * Shops set up before Smart Collect get, once: a "UTR / ref" column on their payments list (v1), and that list kept
+ * as a ledger whose rows merge across devices instead of being replaced (v2). Used for the bank
  * reference of UPI and bank transfers, typed or filled in by Smart Collect.
  */
 export function upgradeCollect(app, t) {
-  if (!app || app.collectV) return false;
+  if (!app || (app.collectV || 0) >= 2) return false;
   const cfg = collectSetup(app);
   if (cfg && !cfg.ref) cfg.pay.columns.push({ id: 'ref', label: t('UTR / ref'), type: 'text', remember: false });
-  app.collectV = 1;
+  if (cfg) cfg.pay.ledger = true;   // v2: money rows are append-only and merge across devices (ledger.js)
+  app.collectV = 2;
   return true;
 }

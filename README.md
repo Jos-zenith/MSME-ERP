@@ -17,8 +17,8 @@ Builder](#renamed-from-msme-builder).*
 
 ```
 npm start          # http://localhost:8080  (and your Wi-Fi address, so staff phones can open it)
-npm test           # 89 unit tests: engine, rules, GST, memory, counter, sync + live feed, Smart Collect, credit passport, CSV, translations
-npm run test:e2e   # 27 browser scenarios in real Chrome/Edge (needs `npm install` once for puppeteer-core)
+npm test           # 116 unit tests: engine, rules, GST, memory, counter, sync + live feed, sync accounts, payments and stock across devices, Smart Collect, credit passport, CSV, translations
+npm run test:e2e   # 29 browser scenarios in real Chrome/Edge (needs `npm install` once for puppeteer-core)
 ```
 
 Open it, pick a language, type your shop's name, choose **Shop: billing + stock**, **Shop with GST invoices** or
@@ -75,7 +75,8 @@ you turn sync on.
 
 1. `npm start`, open http://localhost:8080, onboard with **Shop: billing + stock** and sample data.
 2. **Settings → Your business:** set a UPI ID (any `name@bank` works in sandbox).
-3. **Settings → Sync between devices:** server = this address, any workspace name and passphrase → *Connect*.
+3. **Settings → Sync between devices:** server = this address, a workspace name, *Suggest one* for the passphrase, and
+   the **setup code** the server printed when it started → *Connect*.
 4. **Settings → Smart Collect:** tick *Turn on Smart Collect* and *Sandbox*. *Show webhook URL & secret* shows what a
    provider would be given.
 5. Press **N** (billing counter). Type `oil1` + Enter, press **F2**. The QR shows *"Waiting for the payment…"*.
@@ -146,7 +147,8 @@ and the payer-phone row apply money automatically; everything else asks the owne
 | Guarantee | How |
 |---|---|
 | A retried or replayed webhook changes nothing | Event id = hash of the UTR; a repeat returns `duplicate: true` |
-| Two devices cannot pay a bill twice | A bill never gets a second row with the same UTR; per-record last-write-wins keeps one version |
+| The same bank payment is never counted twice | A bill never gets a second row with the same UTR, on one device or merged from two |
+| Different payments recorded on two offline devices both survive | Payments are a ledger that merges on sync; see [Sync, backup and security](#sync-backup-and-security) |
 | Unsigned or mis-signed calls are refused | HMAC-SHA256 over the raw body, constant-time compare, rate-limited per IP |
 | A device cannot forge or alter a bank confirmation | `/api/sync` refuses device-created payment events and restores the bank's fields from the server copy |
 | Failed or pending payments are not money | Only success statuses are stored |
@@ -355,12 +357,38 @@ import wizard lets you re-map any column that differs.
 * **Where data lives.** In the browser's IndexedDB on each device. Ask the browser to protect it from cleanup under
   *Settings → This device*, and install the app to the home screen.
 * **Sync** (optional): run `npm start` on any always-on machine (an old laptop, a cheap VPS), then *Settings → Sync* on
-  each device with a workspace name and passphrase. Each device keeps one streaming connection open (`/api/live`); the
+  each device with a workspace name and passphrase (see *Sync accounts* below). Each device keeps one streaming connection open (`/api/live`); the
   server announces every change and the other devices pull it within about a second (a once-a-minute poll is the
-  fallback if a proxy blocks streaming). **Conflict rule: per record, the most recent edit wins** (device clocks are
-  trusted, so keep them on automatic time). Deletions sync. The server stores a scrypt hash of the passphrase,
-  rate-limits guessing, and keeps 14 daily copies in `data/backups/`. The server is plain HTTP: put it behind HTTPS
+  fallback if a proxy blocks streaming). **Payments and stock merge, they are never overwritten** (see below). For other
+  fields, an edit that saw the other device's edit wins; two edits made without seeing each other keep the newer value
+  *and* leave a conflict note with both values on the record (keep device clocks on automatic time). Deletions sync. The server keeps 14 daily
+  copies in `data/backups/`. The server is plain HTTP: put it behind HTTPS
   (Caddy, nginx, Cloudflare Tunnel) before exposing it to the internet. Smart Collect needs that anyway.
+* **Sync accounts.** A workspace is created only by the shop's first device, which must ask to create it and give the
+  **setup code** the server prints when it starts (also in `data/setup-code.txt`; `SETUP_CODE` sets your own,
+  `ALLOW_NEW_WORKSPACES=false` turns creation off). Other devices join with the workspace name and passphrase only,
+  and a mistyped name is refused instead of creating an empty shop. Names ignore case and spaces (*Verma Kirana* =
+  *verma-kirana*). A new passphrase must have 10+ characters, 5+ different characters, and no common password or the
+  workspace name in it. *Suggest one* makes a 3 × 4 character passphrase (about 60 bits). The server stores a scrypt
+  hash. Wrong guesses are limited to 8 a minute per address and 30 per 15 minutes per workspace from all addresses.
+  A device whose passphrase was already accepted skips the limit (and the slow hash), so guessing cannot lock the
+  shop's own devices out. **Change passphrase** (Settings → Sync) cuts off a lost phone or a former employee: their
+  live feed closes at once, and on their next try the device stops syncing and says why, until the new passphrase is
+  typed. Workspaces made before these rules keep their old passphrase and show a warning to change it.
+* **Payments across devices.** Every payment row has a permanent id given when it is
+  recorded, offline included, and rows are append-only: correcting or removing a payment writes a *reversal* that stays
+  visible on the bill (*Reversed: Payments received*), crossed out and not counted. Syncing merges the rows from every
+  device, so ₹300 cash taken on one offline device and ₹500 UPI on another are both there afterwards (₹800 paid), in
+  either sync order. A repeated, replayed or interrupted sync adds nothing, and the same bank payment (UTR) counts once
+  even if two devices recorded it. Paid, balance and status are always recomputed from the rows. Anything two devices
+  changed at the same time is shown on the bill as *Changed on two devices at the same time*, with what was kept, until
+  the owner taps *Checked*. A bill deleted on one device while another took a payment on it is kept. An edit form left
+  open during a sync cannot remove payments it never showed. → [ledger.js](public/js/ledger.js), [details and tests](docs/tech/smart-collect-design.md#financial-records-across-devices-ledgerjs)
+* **Stock across devices.** Stock works the same way. Each item keeps a list of movements (opening stock, every sale,
+  purchase and return, every number typed by hand) and *Stock in hand* is their sum. Two devices selling the same item
+  offline both count after sync (9 in stock, one sold on each: 7), in either order. Deleting or restoring the same bill
+  on two devices moves the stock once. Typing a new number records the difference from what you saw, so it adds to
+  sales made elsewhere meanwhile instead of wiping them. The item page shows *Stock history*, each sale linked to its bill.
 * **Invoice numbers across devices.** Give each device a *device tag* (A, B) so offline devices never issue the same number.
 * **The PIN** keeps casual users out on a shared device and separates owner from staff. It is **not** disk encryption:
   stored data is readable by anyone with the unlocked device, so also use the phone/laptop screen lock. Use
@@ -397,7 +425,7 @@ import wizard lets you re-map any column that differs.
 * **Records** are `{ id, table, data, created, updated, deleted }`. Every table, including the system table `_collect`
   (bank-confirmed payments), syncs through the same path.
 * **App definition** (tables, fields, rules, dashboards, settings) is one JSON document that syncs like a record.
-* **Pure engines** (`formula`, `schema`, `rules`, `collect`, `credit`, `gst`) have no DOM and are tested directly in Node.
+* **Pure engines** (`formula`, `schema`, `rules`, `ledger`, `collect`, `credit`, `gst`) have no DOM and are tested directly in Node. The server imports `ledger`, `schema` and the GST hooks, so it merges and recomputes exactly as the devices do.
 
 ---
 
@@ -411,6 +439,7 @@ Server environment variables:
 | `HOST` | `0.0.0.0` | Interface (all, so phones on the same Wi-Fi can connect) |
 | `DATA_DIR` | `./data` | Workspace files, the Smart Collect hook index and daily backups |
 | `ALLOW_NEW_WORKSPACES` | `true` | `false` stops anyone creating a new workspace on this server |
+| `SETUP_CODE` | generated | Code a shop's first device must give to create a workspace. Without it, one is made on first start, printed, and kept in `DATA_DIR/setup-code.txt` |
 | `CORS_ORIGIN` | `*` | CORS header for the API |
 | `COLLECT_SANDBOX` | `true` | Allows *Simulate a payment*. **Set `false` in production** |
 
@@ -421,12 +450,16 @@ App settings that matter for payments: *Settings → Your business → UPI ID* (
 
 ## HTTP API
 
-All `POST` bodies are JSON. Workspace endpoints authenticate with `{ ws, token }` (workspace name + passphrase).
+All `POST` bodies are JSON. Workspace endpoints authenticate with `{ ws, token }` (workspace name + passphrase). An
+unknown workspace is created only with `{ create: true, setupCode }` and a strong passphrase (`400 { error, code:
+"weak_short" | "weak_simple" | "weak_guessable" }` otherwise). A wrong name or passphrase is `403`; too many wrong
+tries are `429`.
 
 | Method and path | Auth | Purpose |
 |---|---|---|
 | `GET /api/health` | none | `{ ok: true }` |
-| `POST /api/sync` | workspace | Push `records` and `app`; pull everything after `since`. Returns `{ seq, records, app }` |
+| `POST /api/sync` | workspace | Push `records` and `app`; pull everything after `since`. Returns `{ seq, records, app, ws, weak? }` (`weak`: the passphrase would not be accepted today) |
+| `POST /api/passphrase` | workspace | `{ newToken }`: change the passphrase for every device; closes live feeds using the old one |
 | `POST /api/live` | workspace | Streaming response; writes `data: {"seq":n}` on every change |
 | `POST /api/export` | workspace | Full server-side copy in backup format (`vina-backup`) |
 | `POST /api/collect/setup` | workspace | `{ rotate? }` → `{ hookPath, secret, sandbox }` |
@@ -452,6 +485,7 @@ public/                     the whole app (static files; works from any web serv
   js/rules.js               workflow engine                   js/analytics.js dashboard queries
   js/store.js  db.js        records, outbox, approvals; IndexedDB / memory adapters
   js/sync.js   security.js  sync client (+ Smart Collect setup/simulate); PIN + encrypted backups
+  js/ledger.js              payments and stock across devices: permanent row ids, reversals, version vectors, merge (pure; server uses it too)
   js/collect.js             Smart Collect: per-bill UPI reference, payment matching (pure), idempotent apply
   js/credit.js              Credit Passport: readiness score, indicative limit, consented export (pure)
   js/print.js               invoices, receipts, UPI QR      js/csv.js  CSV parse/write, Zoho/Vyapar header aliases
@@ -492,11 +526,13 @@ tests/unit  tests/e2e       node:test unit tests; Chrome-driven end-to-end scena
 | [core.test.mjs](tests/unit/core.test.mjs) | 17 | formulas, store, rules, outbox, walk-in sales, backups (including pre-rename files) |
 | [gst.test.mjs](tests/unit/gst.test.mjs) | 26 | GSTIN checksum, tax split, numbering, GSTR-1/3B, ITC set-off, e-way bill |
 | [assist.test.mjs](tests/unit/assist.test.mjs) | 15 | phone matching, quick create, item codes, usual items, typo search |
+| [ledger.test.mjs](tests/unit/ledger.test.mjs) | 21 | the ₹300 + ₹500 acceptance test (both orders), replayed / interrupted sync, reversals, conflicts, delete vs payment, UPI on two devices, upgrade, stale edit form, randomised three-device convergence; stock: the 9 → 7 acceptance test (both orders), hand count vs sale, stale item form, bill edit / delete / restore on two devices, one bill changed twice, upgrade, randomised |
 | [platform.test.mjs](tests/unit/platform.test.mjs) | 15 | CSV, translations (hi/ta/te), service-worker list, encryption, sync server, live feed, path traversal |
+| [accounts.test.mjs](tests/unit/accounts.test.mjs) | 6 | passphrase rules, creation only with the setup code, a typo creates nothing, names ignore case, setup code persistence and settings, guessing limits per address and per workspace, changing the passphrase, workspaces made before the rules |
 | [collect.test.mjs](tests/unit/collect.test.mjs) | 10 | references, matching ladder, idempotency, counter verify, wait-for-bill, owner queue, GST template, signed webhook, forgery refusal, sandbox, secret rotation |
 | [credit.test.mjs](tests/unit/credit.test.mjs) | 5 | new shop, strong shop (exact points and limit), risky shop, GST credit notes and B2B financing, export privacy |
 | [perf.test.mjs](tests/unit/perf.test.mjs) | 1 | 3,000 bills / 2,000 items timings |
-| [e2e/run.mjs](tests/e2e/run.mjs) | 27 | real keystrokes in headless Chrome: counter, offline, two devices, live sync, PINs, builder, import, Hindi, phone layout, GST, Smart Collect at the counter and later, credit passport |
+| [e2e/run.mjs](tests/e2e/run.mjs) | 29 | real keystrokes in headless Chrome: counter, offline, two devices, live sync, payments and stock on two offline browsers, sync accounts (setup code, typo, change passphrase), PINs, builder, import, Hindi, phone layout, GST, Smart Collect at the counter and later, credit passport |
 
 `npm run test:e2e -- "Smart Collect"` runs only matching scenarios. `SHOTS_DIR=./shots npm run test:e2e` saves screenshots.
 
@@ -517,6 +553,28 @@ The product was called *MSME Builder*; it is now **Vina**. Existing shops keep w
 
 ## Honest limits
 
+* **One bill changed differently on two devices at once can leave stock off by the difference.** Example: bill quantity
+  2 changed to 3 on one device and to 4 on the other. The bill keeps one quantity and the item keeps one of the two stock
+  changes, which may not match. Both show a *Changed on two devices* note, and the item note asks for a count.
+* **An item's stock history keeps growing.** Every sale adds a row to the item, and the whole item is sent on each sync.
+  Measured on a laptop: under 3 ms per sale at 1,000 movements, about 27 ms at 5,000, when the item's record is about
+  800 KB. A best-seller at 50 sales a day reaches 5,000 in about 100 days, and a low-end phone is slower. Needs
+  compacting old movements (a server-side checkpoint) before long-running use.
+* **Merged-in changes do not trigger workflows.** A bill that becomes Paid only because two devices' payments were
+  merged does not queue the "receipt when paid" message. Stock that falls to the reorder level only because of another
+  device's sales does not raise a low-stock alert until the next sale or edit of that item on this device.
+* **Every device must run the same version.** A device still on an older version merges payments correctly, but its
+  edits to other fields lose to the server's copy without a note, and its stock changes are lost (it writes a number,
+  not a movement). After a passphrase change it keeps retrying the old one, and those tries count toward the workspace's
+  guessing limit, which can briefly block a new device from joining. The app asks to reload when an update is ready.
+* **One passphrase per shop, not per person.** Every device shares the workspace passphrase; there are no per-device
+  keys, so cutting off one phone means changing it on all the others. Owner and staff are told apart by the app's
+  PINs on each device, not by the server.
+* **Synced data is not end-to-end encrypted.** Whoever runs the server can read the shop's records. Use HTTPS, and run
+  the server yourself or with someone you trust.
+* **Guessing limits reset when the server restarts,** and a device whose passphrase was accepted before a restart must
+  pass the limits again until it is recognised. Workspaces made before the passphrase rules keep their old (possibly
+  short) passphrase until the owner changes it. The app warns but does not force it.
 * **Smart Collect needs a provider and a public server.** It is built and tested against a sandbox that uses the real
   webhook path. Going live needs a UPI collections account (merchant VPA), the provider's payload and signature mapped
   in `normalizeEvent` / `handleCollectHook`, and the sync server reachable over HTTPS with `COLLECT_SANDBOX=false`.

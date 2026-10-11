@@ -144,7 +144,8 @@ export function exportCsv(store, table) {
     }
     return rows;
   };
-  const opts = [{ title: t('Standard spreadsheet (CSV)'), build: () => (table.fields.some((f) => f.type === 'lines') ? flattened(table.fields.find((f) => f.type === 'lines')) : plain()) }];
+  const shownLines = table.fields.find((f) => f.type === 'lines' && !f.hidden);   // not stock history: one row per item
+  const opts = [{ title: t('Standard spreadsheet (CSV)'), build: () => (shownLines ? flattened(shownLines) : plain()) }];
   if (zoho) opts.push({ title: zoho.title, build: () => [zoho.columns.map((c) => c[0]), ...store.records(table.id).map((r) => zoho.columns.map(([, src]) => (typeof src === 'function' ? src(r) : r.data[src] ?? '')))] });
   if (table.id === 'invoices' && fieldOf(table, 'items')) opts.push({ title: 'Zoho Books — Invoices', build: zohoInvoices });
   const body = h('div', h('p', t('Choose a format:')), h('div.choices', opts.map((o) => h('button.btn.block', { onclick: () => {

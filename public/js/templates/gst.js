@@ -1,7 +1,7 @@
 // GST shop / trader starter: the retail app, with the GST engine (public/gst) doing the tax.
 // Tax invoices, bills of supply and credit notes; CGST + SGST or IGST worked out live from the place of supply;
 // HSN codes and GST rates that travel from the item to the bill; purchases that feed input credit; GSTR-1 / 3B.
-import { F, baseSettings, tasksTable, STATUS_COLORS, makeApp, cond, collectedToday, billedToday, pendingSub, walkInSale } from './common.js';
+import { F, baseSettings, tasksTable, STATUS_COLORS, makeApp, cond, collectedToday, billedToday, pendingSub, walkInSale, stockMovesField } from './common.js';
 import { todayStr, addDays } from '../formula.js';
 import { STATE_LABELS, UNIT_NAMES, GST_RATES, DOC_TYPES, stateCodeOf, stateLabel } from '../../gst/js/gst.js';
 import '../../gst/js/hooks.js';
@@ -51,9 +51,10 @@ export function gstShop(t, o = {}) {
       F('price', t('Selling price'), 'money', { required: true, width: 'third' }),
       F('cost', t('Buying price'), 'money', { width: 'third' }),
       F('cess', t('Cess %'), 'number', { default: 0, width: 'third' }),
-      F('stock', t('Stock in hand'), 'number', { default: 0, width: 'third' }),
+      F('stock', t('Stock in hand'), 'number', { default: 0, width: 'third', moves: 'stock_moves' }),
       F('reorder', t('Reorder level'), 'number', { default: 5, width: 'third', hint: t('You get an alert when stock falls to this level') }),
       F('stock_value', t('Stock value'), 'money', { formula: 'stock * cost' }),
+      stockMovesField(t),   // every sale, purchase and correction as its own row: merges across devices
     ],
   };
 
@@ -106,7 +107,7 @@ export function gstShop(t, o = {}) {
       C('tax_total', 'GST', 'money', { hidden: true }),
       C('total', t('Total'), 'money', { big: true }),
       F('payments', t('Payments received'), 'lines', {
-        quickAdd: payPresets,
+        quickAdd: payPresets, ledger: true,   // money rows: append-only, merged across devices (ledger.js)
         columns: [
           F('pdate', t('Date'), 'date', { default: 'today' }),
           F('mode', t('Mode'), 'select', { options: [cash, upi, card, bank], default: cash }),

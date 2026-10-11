@@ -178,7 +178,7 @@ export function posView(ctx) {
       const row = { ...newRow(pay, c), [amountCol.id]: amount, [modeCol.id]: modes[tender] };
       // the bank already confirmed it while the customer stood here: record its UTR with the payment
       const got = isUpi() && collectOn(store) && refCol ? received(paymentQr(store, table, { id: rid, data })?.ref) : [];
-      if (got.length === 1 && Math.abs(toNum(got[0].data.amount) - amount) < 0.005) row[refCol.id] = got[0].data.utr;
+      if (got.length === 1 && Math.abs(toNum(got[0].data.amount) - amount) < 0.005) Object.assign(row, { [refCol.id]: got[0].data.utr, _src: 'bank' });
       draft = computeRecord(table, { ...data, [pay.id]: [row] }, c);
     }
     saving = true;
