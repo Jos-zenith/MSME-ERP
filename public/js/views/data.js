@@ -60,6 +60,7 @@ export function homeView(ctx) {
       kpis.length ? h('section.kpi-strip', { 'aria-label': t('Today') }, kpis.map((w) => widgetCard(store, w, { compact: true }))) : null,
       h('div.home-grid',
         h('div.home-main',
+          gettingStarted(store, ctx, paint),
           main ? receivables(store, main) : null,
           quick.length ? recent(store, quick) : null,
           chart ? widgetCard(store, chart) : null),
@@ -79,6 +80,31 @@ export function homeView(ctx) {
   ctx.watch(debounce(paint, 60));
   return el;
 }
+/**
+ * After the first screen: the few things left to set up, each asked where it is useful, not on the first screen.
+ * Ticks itself off (UPI ID, own items, phone, second device); gone once all are done or the owner hides it.
+ */
+function gettingStarted(store, ctx, repaint) {
+  const g = store.meta.guide;
+  if (!g || g.hidden || ctx.role !== 'owner') return null;
+  const b = store.business, counter = posTable(store);
+  const steps = [
+    counter ? [t('Make your first bill'), !!g.firstBill || store.records(counter).some((r) => r.created > g.at), '#/pos'] : null,
+    [t('Add your UPI ID: a scan-to-pay QR on every bill'), !!String(b.upi || '').trim(), '#/settings'],
+    store.table('items') ? [t('Add your own items, or import them from Excel'), store.records('items').some((r) => r.created > g.at), '#/t/items'] : null,
+    [t('Get low-stock alerts on WhatsApp: add your phone'), !!String(b.phone || '').trim(), '#/settings'],
+    [t('Use it on a second phone or computer'), !!store.meta.sync?.enabled, '#/settings'],
+  ].filter(Boolean);
+  const done = steps.filter((s) => s[1]).length;
+  if (done === steps.length) return null;
+  return h('section.card.getting-started',
+    h('div.card-head', h('h3', t('Get set up'), h('span.muted', ` ${done}/${steps.length}`)),
+      h('button.link.tiny', { type: 'button', onclick: () => { store.meta.guide = { ...g, hidden: true }; store._persistMeta('guide'); repaint(); } }, t('Hide'))),
+    h('div.gs-bar', { role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': steps.length, 'aria-valuenow': done }, h('span', { style: { width: `${(done / steps.length) * 100}%` } })),
+    h('ul.gs-list', steps.map(([label, ok, href]) => h('li', { class: ok ? 'done' : '' },
+      h('a', { href }, h('span.gs-tick', ok ? icon('check', { size: 14 }) : null), h('span.gs-lbl', label), ok ? null : icon('chevron', { size: 16 }))))));
+}
+
 /** Records changed on two devices at once that the owner has not checked yet (the first one opens). */
 function conflictsAttn(store) {
   const list = store.conflicted();

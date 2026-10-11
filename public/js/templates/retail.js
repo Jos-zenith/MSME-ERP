@@ -145,7 +145,8 @@ export function retail(t, o = {}) {
       conditions: [cond('stock', '<=', 'reorder', 'field')],
       actions: [
         { type: 'message', channel: 'inapp', body: t('Low stock: {{name}} — only {{stock}} {{unit}} left (reorder level {{reorder}})') },
-        ...(o.phone ? [{ type: 'message', channel: 'whatsapp', to: ownerPhone, body: t('Low stock: {{name}} — only {{stock}} {{unit}} left. Time to reorder!') }] : []),
+        // to the owner's phone once one is added (Settings, or the getting-started list): not asked on the first screen
+        { type: 'message', channel: 'whatsapp', to: ownerPhone, skipIfNoRecipient: true, body: t('Low stock: {{name}} — only {{stock}} {{unit}} left. Time to reorder!') },
       ],
     },
     {

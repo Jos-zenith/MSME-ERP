@@ -485,16 +485,7 @@ await scenario('CSV import: Zoho-style items file maps automatically and upserts
 });
 
 await scenario('Hindi UI: nav, dashboard, form and the customer message are in Hindi', async ({ page }) => {
-  await page.waitForSelector('.onboard-card .lang-grid');
-  await page.evaluate(() => [...document.querySelectorAll('.lang-grid button')].find((b) => b.textContent.trim() === 'हिन्दी').click());
-  await page.waitForSelector('.onboard-card input');
-  const ins = await page.$$('.onboard-card input');
-  await ins[0].type('शर्मा स्टोर'); await ins[1].type('9876500001'); await ins[2].type('sharma@upi');
-  await clickText(page, '.onboard-card button', 'आगे');
-  await page.waitForSelector('.tpl-grid');
-  await page.evaluate(() => document.querySelectorAll('.tpl-grid .tile')[0].click());
-  await clickText(page, '.onboard-card .btn.primary', 'शुरू करें');
-  await page.waitForSelector('.topbar');
+  await onboard(page, { lang: 'हिन्दी', name: 'शर्मा स्टोर', phone: '9876500001', upi: 'sharma@upi' });
   await sleep(300);
   const t = await text(page);
   assert.match(t, /आज की वसूली/);
@@ -516,7 +507,7 @@ await scenario('phone layout: no sideways scrolling on the main screens (375px)'
   await onboard(page);
   const wide = [];
   await evalStore(page, `store.settings.collect = { enabled: true, sandbox: true, since: '2026-01-01' }; store.touchApp();`);
-  for (const h of ['#/', '#/t/invoices', '#/t/invoices/new', '#/reports', '#/outbox', '#/outbox/payments', '#/credit', '#/build', '#/settings']) {
+  for (const h of ['#/', '#/t/invoices', '#/t/invoices/new', '#/reports', '#/outbox', '#/outbox/payments', '#/credit', '#/build', '#/settings', '#/pos']) {
     await goto(page, h); await sleep(250);
     const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (over > 1) wide.push(`${h} (+${over}px)`);
@@ -957,6 +948,46 @@ await scenario('an app version the sync server no longer accepts says "Update to
   // the app itself cancelled its live feed when the server refused its version: expected, not an error
   app.errors.splice(0, app.errors.length, ...app.errors.filter((e) => !/requestfailed: .*\/api\/live$/.test(e)));
 });
+
+for (const [label, viewport] of [['laptop', { width: 1280, height: 800 }], ['phone', { width: 390, height: 844, isMobile: true, hasTouch: true }]]) {
+  await scenario(`first run (${label}): one question, Start billing, a guided first bill in two taps, what Vina did by itself, then what is left`, async ({ page }) => {
+    await page.waitForSelector('.onboard-card .onboard-start');
+    assert.equal(await page.$$eval('.onboard-card input', (i) => i.length), 1, 'one question on the first screen (the shop name)');
+    assert.match(await page.$eval('.onboard-card', (e) => e.textContent), /Start billing/);
+    await shot(page, `first-run-${label}`);
+    let taps = 0;
+    const tap = async (sel) => { taps++; await page.click(sel); };
+    await page.type('.onboard-card input[name=shop]', 'Asha Kirana');
+    await tap('.onboard-start');
+    // straight to the counter, with the first bill guided
+    await page.waitForFunction(() => location.hash === '#/pos' && document.querySelector('.coach:not([hidden])'), { timeout: 6000 });
+    assert.match(await page.$eval('.coach', (e) => e.textContent), /Your first bill[\s\S]*Tap an item/);
+    await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+    await tap('.usual .usual-chip');                                         // one tap: a popular item
+    await page.waitForFunction(() => document.querySelector('.coach li.done'));
+    await tap(label === 'phone' ? '.pos-bar-save' : '.pos-save');            // one tap: Save
+    await page.waitForSelector('.overlay .aha-list');
+    const aha = await page.$eval('.overlay', (e) => e.textContent);
+    assert.match(aha, /Your first bill is saved/);
+    assert.match(aha, /Stock updated: .+ \d+ → \d+/, 'shows the stock it moved');
+    assert.match(aha, /Today’s takings on your dashboard: ₹[\d,.]+/);
+    assert.match(aha, /working without internet/i);
+    assert.equal(await page.evaluate(() => window.__printed), 0, 'no print dialog on a newcomer\'s first bill');
+    assert.equal(taps, 3, 'Start billing, an item, Save');
+    await shot(page, `first-bill-${label}`);
+    // the dashboard: the bill counted, and what is left to set up (the first bill already ticked)
+    await clickText(page, '.overlay .btn', 'See my dashboard');
+    await page.waitForSelector('.getting-started');
+    const gs = await page.$eval('.getting-started', (e) => e.textContent);
+    assert.match(gs, /Get set up\s*1\/5/);
+    assert.equal(await page.$eval('.getting-started li.done', (e) => e.textContent.trim()), 'Make your first bill');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth) <= 1, true, 'no sideways scrolling');
+    await shot(page, `getting-started-${label}`);
+    // adding the UPI ID where it is needed ticks it off
+    await evalStore(page, `store.business.upi = 'asha@okaxis'; store.touchApp();`);
+    await page.waitForFunction(() => /2\/5/.test(document.querySelector('.getting-started')?.textContent || ''));
+  }, { viewport });
+}
 
 // ===================================================================================================
 await srv.close();

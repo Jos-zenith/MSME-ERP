@@ -75,6 +75,8 @@ async function execAction(store, rule, a, event, table, rec, prev, depth) {
     case 'message': {
       if (event === 'before_save') return null;
       const channel = a.channel || 'inapp';
+      // a message to someone not known yet (the owner has not added a phone): nothing to queue until they do
+      if (a.skipIfNoRecipient && channel !== 'inapp' && !renderTemplate(a.to || '', { table, data: rec.data, ctx: store.ctx() }).trim()) return null;
       store.queueOutbox({
         ruleId: rule.id, ruleName: rule.name, table: table.id, recordId: rec.id, channel,
         to: a.to || '', subject: a.subject || '', body: a.body || '',

@@ -7,14 +7,14 @@
 //
 // With Smart Collect on, the UPI QR carries this bill's own reference, and the bank's confirmation shows up here within
 // seconds (no screenshots to trust). The bill's id is fixed when the bill starts so its reference is known before saving.
-import { h, toast, confirmDialog } from '../ui/dom.js';
+import { h, toast, confirmDialog, modal } from '../ui/dom.js';
 import { t } from '../i18n.js';
 import { linesEditor } from '../ui/lines.js';
 import { makeControl } from '../ui/controls.js';
 import { openRecordModal } from '../ui/form.js';
 import { computeRecord, newRecordData, defaultsFor, newRow, rowIsBlank, isBlank, isComputed, fieldOf, formatValue, recordTitle, parseQuickCreate, uid } from '../schema.js';
 import { collectOn, COLLECT_TABLE } from '../collect.js';
-import { toNum } from '../formula.js';
+import { toNum, todayStr } from '../formula.js';
 import { buildDocument, paymentQr } from '../print.js';
 import { icon } from '../ui/icons.js';
 import { emptyState } from '../ui/bits.js';
@@ -62,6 +62,58 @@ export function posView(ctx) {
   const hasParty = () => party && !isBlank(data[party.id]);
 
   const refresh = () => { data = computeRecord(table, data, c); editor.sync(); paintSide(); keep(); };
+
+  // ---- first run: a guided first bill, then what Vina did by itself (the moment the product makes sense) ----------------
+  const guiding = () => store.meta.guide?.step === 'first-bill';
+  const coach = h('div.coach', { role: 'note' });
+  function paintCoach() {
+    coach.hidden = !guiding();
+    if (coach.hidden) return;
+    const step = (n, text, done) => h('li', { class: done ? 'done' : '' }, h('span.coach-n', done ? '✓' : String(n)), h('span', text));
+    coach.replaceChildren(
+      h('b.coach-title', t('Your first bill')),
+      h('ol.coach-steps',
+        step(1, t('Tap an item below, or scan or type its code'), hasItems()),
+        step(2, hasItems() ? t('Now press Save: that is the whole bill') : t('Then press Save'), false)),
+      h('button.link.tiny.coach-skip', { type: 'button', onclick: () => { endGuide(); focusScan(); } }, t('Skip')));
+  }
+  function endGuide(firstBill) {
+    store.meta.guide = { ...(store.meta.guide || {}), step: 'done', ...(firstBill ? { firstBill } : {}) };
+    store._persistMeta('guide');
+    paintCoach();
+  }
+  const itemCol = items.columns.find((col) => col.type === 'lookup');
+  const stockOf = (d) => new Map((d[items.id] || []).filter((r) => r[itemCol.id]).map((r) => [r[itemCol.id], store.getRecord(itemCol.ref, r[itemCol.id])?.data.stock]));
+  /** What just happened, in the owner's words: stock moved, today's takings, a receipt ready, offline. */
+  function celebrate(rec, stockBefore, paidBy) {
+    endGuide({ id: rec.id, at: store.now() });
+    const line = (rec.data[items.id] || []).find((r) => r[itemCol.id] && stockBefore?.get(r[itemCol.id]) !== undefined);
+    const it = line && store.getRecord(itemCol.ref, line[itemCol.id]);
+    const stockMoved = it && it.data.stock !== stockBefore.get(it.id)
+      ? t('Stock updated: {item} {from} → {to}', { item: it.data.name || recordTitle(store.table(itemCol.ref), it), from: stockBefore.get(it.id), to: it.data.stock }) : null;
+    const today = todayStr(), dateCol = pay.columns.find((col) => col.type === 'date');
+    const collected = store.records(table.id).reduce((sum, r) => sum + (r.data[pay.id] || [])
+      .filter((p) => (dateCol ? p[dateCol.id] : r.data.date) === today).reduce((a, p) => a + toNum(p[amountCol.id]), 0), 0);
+    const tick = (text) => (text ? h('li', icon('check', { size: 16 }), h('span', text)) : null);
+    modal({
+      title: `🎉 ${t('Your first bill is saved')}`,
+      body: h('div.aha',
+        h('div.aha-bill', h('b', recordTitle(table, rec)), h('b.aha-amt', money(rec.data.total)), h('span.muted', paidBy)),
+        h('p', t('Vina did all of this by itself:')),
+        h('ul.aha-list',
+          tick(stockMoved),
+          tick(t('Today’s takings on your dashboard: {amount}', { amount: money(collected) })),
+          tick(t('A receipt is ready to print or send on WhatsApp')),
+          tick(store.business.upi ? t('The bill carries a QR, so customers can pay the exact amount by UPI') : null),
+          tick(t('Saved on this device: it keeps working without internet'))),
+        store.business.upi ? null : h('p.hint', t('Next: choose UPI on a bill to add your UPI ID, and every bill shows a scan-to-pay QR.'))),
+      actions: [
+        { label: t('Print receipt'), fn: (close) => { close(); printReceipt(rec); } },
+        { label: t('See my dashboard'), fn: (close) => { close(); location.hash = '#/'; } },
+        { label: t('Next bill'), primary: true, value: null },
+      ],
+    });
+  }
 
   // ---- left: scan + items -------------------------------------------------------------------------------------------
   const editor = linesEditor({
@@ -143,6 +195,7 @@ export function posView(ctx) {
     creditNote.textContent = tender === 'credit' && party ? t('{amount} goes on the customer\'s account.', { amount: money(data.total) }) : '';
     paintChange();
     paintSave();
+    paintCoach();
   }
   /** Smart Collect: "waiting" until the bank confirms, then the amount and UTR. */
   function upiStatus(qr) {
@@ -205,6 +258,7 @@ export function posView(ctx) {
       draft = computeRecord(table, { ...data, [pay.id]: [row] }, c);
     }
     saving = true;
+    const guided = guiding(), stockBefore = guided ? stockOf(draft) : null, paidBy = tender === 'credit' ? t('Credit') : modes[tender] || '';
     try {
       const res = await store.saveRecord(table.id, draft, { by: store.currentUser, id: rid });
       if (!res.ok) {
@@ -214,8 +268,9 @@ export function posView(ctx) {
       }
       last = res.record;
       lastChange = isCash() && givenIn.value.trim() !== '' ? Math.max(0, toNum(givenIn.value) - total) : 0;
-      if (printOn) printReceipt(res.record);
+      if (printOn && !guided) printReceipt(res.record);   // not on the very first bill: no print dialog in a newcomer's face
       reset();
+      if (guided) celebrate(res.record, stockBefore, paidBy);
     } finally { saving = false; }
   }
   function printReceipt(rec) {
@@ -265,6 +320,7 @@ export function posView(ctx) {
         h('div.page-actions',
           h('a.btn.ghost', { href: `#/t/${table.id}/new?draft=1`, title: t('Due date, notes and every other field'), onclick: () => keep() }, t('Full form')),
           h('button.btn', { type: 'button', onclick: () => clearBill() }, icon('x', { size: 15 }), t('Clear'), h('kbd', 'Esc')))),
+      coach,
       editor.el,
       h('div.pos-keys',
         [['F1–F3', t('Paid by')], ['F4', discount ? discount.label : null], ['F8', party ? party.label : null], ['F9', t('Credit')], ['Enter', t('Save')], ['Esc', t('Clear')]]

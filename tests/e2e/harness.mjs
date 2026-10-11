@@ -37,21 +37,32 @@ export async function launch({ url, viewport = { width: 1280, height: 900 }, lan
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Complete onboarding with the retail template + sample data. */
-export async function onboard(page, { name = 'Test Mart', phone = '9876500001', upi = 'testmart@upi', template = 'retail', sample = true, gstin = '' } = {}) {
+/**
+ * The first screen: language chip, shop name, Start billing. Other templates and 'no example data' are under
+ * 'More options'. Phone and UPI ID are no longer asked there; they are set afterwards, as an owner now does in Settings or
+ * at the counter. `guide: true` keeps the guided first bill (the app opens on the counter); otherwise it is skipped.
+ */
+export async function onboard(page, { name = 'Test Mart', phone = '9876500001', upi = 'testmart@upi', template = 'retail', sample = true, gstin = '', lang = 'English', guide = false } = {}) {
   await page.waitForSelector('.onboard-card .lang-grid');
-  await page.evaluate(() => [...document.querySelectorAll('.lang-grid button')].find((b) => b.textContent.trim() === 'English').click());
-  await page.waitForSelector('.onboard-card input');
-  const inputs = await page.$$('.onboard-card input');
-  await inputs[0].type(name); await inputs[1].type(phone); await inputs[2].type(upi);
-  await page.evaluate(() => [...document.querySelectorAll('.onboard-card button')].find((b) => b.textContent.trim() === 'Next').click());
-  await page.waitForSelector('.tpl-grid');
-  await page.evaluate((tpl) => document.querySelector(`.tpl-grid .tile[data-tpl=${tpl}]`).click(), template);
-  await page.waitForSelector(`.tpl-grid .tile.sel[data-tpl=${template}]`);
+  await page.evaluate((l) => [...document.querySelectorAll('.lang-grid button')].find((b) => b.textContent.trim() === l).click(), lang);
+  await page.waitForSelector('.onboard-card input[name=shop]');
+  await page.type('.onboard-card input[name=shop]', name);
+  if (template !== 'retail' || !sample) {
+    await page.click('.onboard-more');
+    await page.waitForSelector('.tpl-grid');
+    await page.evaluate((tpl) => document.querySelector(`.tpl-grid .tile[data-tpl=${tpl}]`).click(), template);
+    await page.waitForSelector(`.tpl-grid .tile.sel[data-tpl=${template}]`);
+    if (!sample) await page.evaluate(() => { document.querySelector('.onboard-more-box input[type=checkbox]').click(); });
+  }
   if (gstin) { await page.waitForSelector('.gstin-input'); await page.type('.gstin-input', gstin); }
-  if (!sample) await page.evaluate(() => { document.querySelector('.onboard-card input[type=checkbox]').click(); });
-  await page.evaluate(() => [...document.querySelectorAll('.onboard-card button')].find((b) => b.textContent.trim() === 'Start').click());
+  await page.click('.onboard-start');
   await page.waitForSelector('.topbar');
+  await page.evaluate(({ phone, upi, guide }) => {
+    const s = window.__app.store;
+    Object.assign(s.business, { phone, upi }); s.touchApp();
+    if (!guide) { s.meta.guide = { ...(s.meta.guide || {}), step: 'done', hidden: true }; s._persistMeta('guide'); location.hash = '#/'; }
+  }, { phone, upi, guide });
+  await sleep(guide ? 50 : 250);
 }
 
 export async function goto(page, hash) {

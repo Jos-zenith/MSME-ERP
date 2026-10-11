@@ -18,12 +18,16 @@ Builder](#renamed-from-msme-builder).*
 ```
 npm start          # http://localhost:8080  (and your Wi-Fi address, so staff phones can open it)
 npm test           # 139 unit tests: engine, rules, GST, memory, counter, sync + live feed, sync accounts, payments and stock across devices, Smart Collect, credit passport, CSV, translations
-npm run test:e2e   # 30 browser scenarios in real Chrome/Edge (needs `npm install` once for puppeteer-core)
+npm run test:e2e   # 32 browser scenarios in real Chrome/Edge (needs `npm install` once for puppeteer-core)
 ```
 
-Open it, pick a language, type your shop's name, choose **Shop: billing + stock**, **Shop with GST invoices** or
-**Service jobs**, and you have a working app with sample data in under a minute. Nothing is sent to any server unless
-you turn sync on.
+Open it and press **Start billing**. That is the whole setup: one optional question (the shop's name), the language
+detected from the device (one tap to switch), a few example items so there is something to sell. The app opens on the
+billing counter and walks you through a first bill (tap an item, press Save), then shows what it did by itself: the
+stock it moved, today's takings, a receipt ready to send, all saved offline. The rest (UPI ID, your phone for alerts,
+your own items, a second device) is asked where it is needed and ticked off on a short *Get set up* list on the home
+screen. GST invoices, service jobs or an empty app are under *More options*. Nothing is sent to any server unless you
+turn sync on.
 
 **Product docs** (strategy memo, PRDs, technical design): [docs/](docs/README.md)
 
@@ -73,7 +77,7 @@ you turn sync on.
 
 ## A five-minute demo
 
-1. `npm start`, open http://localhost:8080, onboard with **Shop: billing + stock** and sample data.
+1. `npm start`, open http://localhost:8080, press **Start billing**, tap a popular item, press Save: the first bill and what it did by itself.
 2. **Settings → Your business:** set a UPI ID (any `name@bank` works in sandbox).
 3. **Settings → Sync between devices:** server = this address, a workspace name, *Suggest one* for the passphrase, and
    the **setup code** the server printed when it started → *Connect*.
@@ -573,7 +577,7 @@ tests/unit  tests/e2e       node:test unit tests; Chrome-driven end-to-end scena
 | [compat.test.mjs](tests/unit/compat.test.mjs) | 3 | sync protocol policy, refusal before any data is touched, outdated device keeps and later syncs its records |
 | [cors.test.mjs](tests/unit/cors.test.mjs) | 3 | same-origin default, listed origins, explicit wildcard |
 | [perf.test.mjs](tests/unit/perf.test.mjs) | 1 | 3,000 bills / 2,000 items timings |
-| [e2e/run.mjs](tests/e2e/run.mjs) | 30 | real keystrokes in headless Chrome: an outdated app told to update, counter, offline, two devices, live sync, payments and stock on two offline browsers, sync accounts (setup code, typo, change passphrase), PINs, builder, import, Hindi, phone layout, GST, Smart Collect at the counter and later, credit passport |
+| [e2e/run.mjs](tests/e2e/run.mjs) | 32 | real keystrokes in headless Chrome: the first run to a first bill in three taps (laptop and phone), an outdated app told to update, counter, offline, two devices, live sync, payments and stock on two offline browsers, sync accounts (setup code, typo, change passphrase), PINs, builder, import, Hindi, phone layout, GST, Smart Collect at the counter and later, credit passport |
 
 `npm run test:e2e -- "Smart Collect"` runs only matching scenarios. `SHOTS_DIR=./shots npm run test:e2e` saves screenshots.
 

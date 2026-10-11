@@ -22,5 +22,5 @@ Tests that back the claims in these docs:
 
 ```
 npm test                          # 139 unit tests; collect, credit, ledger (payments and stock across devices) and accounts (sync passphrases) .test.mjs cover this work; durability, compat and cors cover the integrity fixes of 2026-10-11
-npm run test:e2e                  # 30 browser scenarios; the last five cover Smart Collect, the Credit Passport, payments and stock on two offline browsers, and sync accounts
+npm run test:e2e                  # 32 browser scenarios; the last five cover Smart Collect, the Credit Passport, payments and stock on two offline browsers, and sync accounts
 ```
