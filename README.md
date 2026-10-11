@@ -471,8 +471,9 @@ node scripts/check-deploy.mjs --sync https://your-sync-server --app https://your
 It checks that the server answers over https, that the app's origin passes the browser preflight and reaches the
 passphrase check, that another web site and a Vercel-preview-style address are refused, that apps without a sync
 protocol get 426, that the payment webhook path is reachable without a browser origin, and whether the sandbox
-simulator is still on. If the app and the sync server are on different origins,  must list the app's exact
-origin; preview deployments need their own entry (never a pattern such as , which would include anyone's app).
+simulator is still on. If the app and the sync server are on different origins, `CORS_ORIGIN` must list the app's
+exact origin; preview deployments need their own entry (never a pattern such as `*.vercel.app`, which would include
+anyone's app).
 
 App settings that matter for payments: *Settings → Your business → UPI ID* (the merchant VPA for the QR), *Settings
 → Smart Collect* (on/off, sandbox), *Settings → Sync* (required for Smart Collect).
