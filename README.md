@@ -365,6 +365,13 @@ import wizard lets you re-map any column that differs.
   *and* leave a conflict note with both values on the record (keep device clocks on automatic time). Deletions sync. The server keeps 14 daily
   copies in `data/backups/`. The server is plain HTTP: put it behind HTTPS
   (Caddy, nginx, Cloudflare Tunnel) before exposing it to the internet. Smart Collect needs that anyway.
+* **"Saved" means on disk.** The server answers a sync, a payment webhook or any other change only after it is
+  written durably: to a temporary file that is flushed to disk (fsync), then renamed over the old file (atomic), then
+  the folder flushed where the OS allows it (not on Windows, where NTFS journals the rename). If the write fails, the
+  device or payment provider gets an error, keeps the change and sends it again; the server drops what it could not save
+  and never serves it. Requests that change data run one at a time. Tested by killing the server process (no warning)
+  straight after ten acknowledged saves and one acknowledged bank payment, and by making the disk refuse writes.
+  Cost: every change rewrites that shop's whole file, so a very large workspace makes each sync slower.
 * **Sync accounts.** A workspace is created only by the shop's first device, which must ask to create it and give the
   **setup code** the server prints when it starts (also in `data/setup-code.txt`; `SETUP_CODE` sets your own,
   `ALLOW_NEW_WORKSPACES=false` turns creation off). Other devices join with the workspace name and passphrase only,

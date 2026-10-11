@@ -159,6 +159,29 @@ mechanism and the separate guarantees it provides:
 - "Newer" for concurrent plain-field edits uses the record's `updated` time, so device clocks still decide *which*
   value is kept. The other value is never lost: it is in the conflict note.
 
+## Durability: an acknowledgement means the data is on disk
+
+Fixed 2026-10-11: the server answered syncs and webhooks first and wrote the file 300 ms later. A crash in that window
+lost changes the device had already marked as synced (it never sends them again) and payments the provider had been
+told were received (it never resends them). Reproduced: a workspace created and acknowledged was gone after a hard kill.
+
+Now (server.js, `exclusive` / `commit`):
+- Handlers change memory and *declare* what to write (`persist`) and what to do afterwards (`afterCommit`: live
+  notifications, closing old feeds). Nothing is answered before `commit()` finishes.
+- `writeDurably`: temporary file, `fsync`, `rename` over the old file, `fsync` of the directory (skipped where the OS
+  refuses it: Windows). The hook index is written the same way.
+- A failed write → the request returns 503, the changed workspaces are dropped from memory (the server falls back to
+  the file on disk) and no device is notified. The device keeps the change and resends it; merges are idempotent.
+- Workspace-changing API requests run strictly one after another, so a failed write cannot be overwritten by a
+  later request that was built on top of it, and no request reads unsaved state.
+- Daily backup copies are taken after the durable write and are best-effort (a failed copy is logged, the live file
+  is already safe).
+
+Tests (durability.test.mjs): the real server as a separate process, killed with SIGKILL straight after each of ten
+acknowledged syncs and after an acknowledged webhook, restarted from the same folder: everything acknowledged is
+there and no temporary files are left. And with writes made to fail: the device is told, keeps its change, the server
+does not keep or serve it, and the retry lands exactly once.
+
 ## Endpoints
 
 | Method and path | Auth | Purpose |

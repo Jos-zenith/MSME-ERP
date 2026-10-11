@@ -11,6 +11,7 @@
 // staff phone to see the same data, or an automatic off-device copy of the shop's records.
 import http from 'node:http';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -65,19 +66,74 @@ function load(ws) {
   if (doc) cache.set(ws, doc);
   return doc;
 }
-const timers = new Map();
-function persist(ws, doc) {
-  clearTimeout(timers.get(ws));
-  timers.set(ws, setTimeout(() => flush(ws, doc), 300));
+// ---- durability: "saved" means on disk ------------------------------------------------------------------------------------
+// Handlers change workspaces in memory and call persist() / afterCommit(). Nothing is answered until commit() has
+// written every changed workspace durably: the bytes go to a temporary file, the file is fsync'd, renamed over the old
+// one (atomic: a reader sees the old or the new file, never half of one), and the directory is fsync'd where the OS
+// allows it. Only then is success returned and are other devices told. If any write fails, the request fails and
+// the changed workspaces are dropped from memory, so the server falls back to what is on disk: it never keeps (or
+// serves) a change it could not save. API requests that touch workspaces run one at a time (`exclusive`), so a failed
+// write can never be overtaken by a later one built on top of it.
+export const testHooks = { failWrites: false };
+const pending = new Map();      // ws -> doc changed by the current request
+let indexDirty = false;
+let after = [];                 // things to do once the change is safe (tell devices, close old live feeds)
+function persist(ws, doc) { pending.set(ws, doc); }
+function afterCommit(fn) { after.push(fn); }
+let tmpN = 0;
+async function writeDurably(file, text) {
+  if (testHooks.failWrites) throw Object.assign(new Error('injected write failure'), { code: 'EIO' });
+  const tmp = `${file}.${process.pid}.${++tmpN}.tmp`;
+  try {
+    const fh = await fsp.open(tmp, 'w');
+    try { await fh.writeFile(text); await fh.sync(); } finally { await fh.close(); }
+    await fsp.rename(tmp, file);
+  } catch (e) { await fsp.unlink(tmp).catch(() => {}); throw e; }
+  await syncDir(path.dirname(file));
 }
-function flush(ws, doc) {
-  const f = fileFor(ws);
-  const tmp = `${f}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(doc));
-  fs.renameSync(tmp, f);
-  dailyBackup(ws, f);
+/** Make the rename itself durable. Windows cannot open a directory for this; NTFS journals the rename instead. */
+async function syncDir(dir) {
+  let d;
+  try { d = await fsp.open(dir, 'r'); await d.sync(); } catch (e) { if (!['EISDIR', 'EPERM', 'EACCES', 'EINVAL', 'EBADF'].includes(e.code)) throw e; } finally { await d?.close().catch(() => {}); }
+}
+async function commit() {
+  const docs = [...pending.entries()], index = indexDirty, todo = after;
+  pending.clear(); indexDirty = false; after = [];
+  try {
+    for (const [ws, doc] of docs) await writeDurably(fileFor(ws), JSON.stringify(doc));
+    if (index) await writeDurably(INDEX_FILE, JSON.stringify(hookIndex));
+  } catch (e) {
+    // fall back to what is on disk: forget the unsaved versions
+    for (const [ws, doc] of docs) { cache.delete(ws); if (doc.ws && doc.ws !== ws) cache.delete(doc.ws); }
+    if (index) hookIndex = readIndex();
+    console.error('write failed, nothing confirmed:', e.message);
+    throw e;
+  }
+  for (const [ws] of docs) dailyBackup(ws, fileFor(ws));
+  for (const fn of todo) { try { fn(); } catch (e) { console.error(e); } }
+}
+function rollbackPending() {
+  for (const [ws, doc] of pending) { cache.delete(ws); if (doc.ws && doc.ws !== ws) cache.delete(doc.ws); }
+  if (indexDirty) hookIndex = readIndex();
+  pending.clear(); indexDirty = false; after = [];
+}
+let lane = Promise.resolve();
+/** Run one request's read-change-write as a unit, one at a time; answers only after commit(). */
+function exclusive(fn) {
+  const run = lane.then(async () => {
+    let out;
+    try { out = await fn(); } catch (e) { rollbackPending(); throw e; }
+    if (out && out.status >= 400) { await commit().catch(() => rollbackPending()); return out; }
+    try { await commit(); } catch { return { status: 503, error: 'The server could not save this. Nothing was changed; it will be sent again.' }; }
+    return out;
+  });
+  lane = run.catch(() => {});
+  return run;
 }
 function dailyBackup(ws, file) {
+  try { backupOnce(ws, file); } catch (e) { console.error('daily backup failed (the live file is safe):', e.message); }
+}
+function backupOnce(ws, file) {
   const day = new Date().toISOString().slice(0, 10);
   const id = path.basename(file, '.json');
   const dest = path.join(DATA_DIR, 'backups', `${id}-${day}.json`);
@@ -87,8 +143,9 @@ function dailyBackup(ws, file) {
     for (const old of mine.slice(0, Math.max(0, mine.length - KEEP_BACKUPS))) fs.unlinkSync(path.join(DATA_DIR, 'backups', old));
   }
 }
-process.on('SIGINT', () => { for (const [ws, doc] of cache) flush(ws, doc); process.exit(0); });
-process.on('SIGTERM', () => { for (const [ws, doc] of cache) flush(ws, doc); process.exit(0); });
+// everything acknowledged is already on disk; just let a write in progress finish
+process.on('SIGINT', () => lane.finally(() => process.exit(0)));
+process.on('SIGTERM', () => lane.finally(() => process.exit(0)));
 
 function hashToken(token, salt = crypto.randomBytes(16).toString('hex')) {
   return { salt, hash: crypto.scryptSync(String(token), salt, 32).toString('hex') };
@@ -170,7 +227,8 @@ function handlePassphrase(body, ip) {
   a.doc.authChanged = new Date().toISOString();
   verified.set(a.doc, new Set([digest(next)]));
   persist(a.doc.ws, a.doc);
-  for (const res of [...(watchers.get(a.doc.ws) || [])]) res.end();
+  const ws = a.doc.ws;
+  afterCommit(() => { for (const res of [...(watchers.get(ws) || [])]) res.end(); });
   return { status: 200, json: { ok: true } };
 }
 
@@ -240,7 +298,7 @@ function handleSync(body, ip) {
   for (const r of Object.values(doc.records)) {
     if (r._seq > since && !accepted.has(r.id) && !resend.has(r.id)) { const { _seq, ...rest } = r; records.push(outgoing(rest)); }
   }
-  if (changed) { persist(doc.ws, doc); notify(doc.ws, doc.seq); }
+  if (changed) { persist(doc.ws, doc); afterCommit(() => notify(doc.ws, doc.seq)); }
   return { status: 200, json: { ok: true, seq: doc.seq, records, app: appOut, ws: doc.ws, ...(a.weak ? { weak: true } : {}) } };
 }
 
@@ -277,13 +335,8 @@ function handleExport(body, ip) {
 // record in the `_collect` table, keyed by its UTR, so a retried or replayed webhook changes nothing. Devices pull it
 // through the normal sync and match it to a bill (public/js/collect.js). The server never touches bills itself.
 const INDEX_FILE = path.join(DATA_DIR, 'collect-index.json');
-let hookIndex = {};
-try { hookIndex = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8')); } catch { hookIndex = {}; }
-function saveIndex() {
-  const tmp = `${INDEX_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(hookIndex));
-  fs.renameSync(tmp, INDEX_FILE);
-}
+function readIndex() { try { return JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8')); } catch { return {}; } }
+let hookIndex = readIndex();   // written durably by commit() (indexDirty)
 export const signBody = (secret, raw) => crypto.createHmac('sha256', secret).update(raw).digest('hex');
 
 const pick = (o, keys) => {
@@ -332,7 +385,7 @@ function ingest(doc, e, source) {
   const { ok, status, ...data } = e;
   doc.records[id] = { id, table: '_collect', origin: 'server', data: { ...data, status: 'new', source }, created: now, updated: now, deleted: false, by: null, _seq: ++doc.seq };
   persist(doc.ws, doc);
-  notify(doc.ws, doc.seq);
+  afterCommit(() => notify(doc.ws, doc.seq));
   return { status: 200, json: { ok: true, id } };
 }
 function ensureHook(doc, rotate = false) {
@@ -340,7 +393,7 @@ function ensureHook(doc, rotate = false) {
   if (doc.collect) delete hookIndex[doc.collect.id];
   doc.collect = { id: crypto.randomBytes(12).toString('hex'), secret: crypto.randomBytes(24).toString('hex'), created: new Date().toISOString() };
   hookIndex[doc.collect.id] = doc.ws;
-  saveIndex();
+  indexDirty = true;
   persist(doc.ws, doc);
   return doc.collect;
 }
@@ -424,13 +477,13 @@ const server = http.createServer(async (req, res) => {
       const raw = await readRaw(req);
       const hook = /^\/api\/collect\/hook\/([0-9a-f]{24})$/.exec(url.pathname);
       if (hook) {
-        const out = handleCollectHook(hook[1], raw, req.headers, ip);
+        const out = await exclusive(() => handleCollectHook(hook[1], raw, req.headers, ip));
         return send(res, out.status, JSON.stringify(out.json || { error: out.error }), { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       }
       const body = parseJson(raw);
-      if (url.pathname === '/api/live') return handleLive(body, ip, req, res, cors);
+      if (url.pathname === '/api/live') return exclusive(() => { handleLive(body, ip, req, res, cors); return null; });
       const routes = { '/api/sync': handleSync, '/api/export': handleExport, '/api/passphrase': handlePassphrase, '/api/collect/setup': handleCollectSetup, '/api/collect/simulate': handleCollectSimulate };
-      const out = routes[url.pathname] ? routes[url.pathname](body, ip) : { status: 404, error: 'Not found' };
+      const out = routes[url.pathname] ? await exclusive(() => routes[url.pathname](body, ip)) : { status: 404, error: 'Not found' };
       return send(res, out.status, JSON.stringify(out.json || { error: out.error, ...(out.code ? { code: out.code } : {}) }), { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     }
     // static files
