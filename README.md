@@ -12,8 +12,7 @@ billing, stock, orders and service-job apps with visual tools. On top of that si
   from the bills and payments the shop already records.
 
 No frameworks, no build step, no runtime dependencies. The whole app (all languages, builder included) is about 130 KB
-over the wire (gzipped) and is cached after the first visit. *Formerly "MSME Builder": see [Renamed from MSME
-Builder](#renamed-from-msme-builder).*
+over the wire (gzipped) and is cached after the first visit.
 
 ```
 npm start          # http://localhost:8080  (and your Wi-Fi address, so staff phones can open it)
