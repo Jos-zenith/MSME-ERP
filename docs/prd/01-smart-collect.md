@@ -5,7 +5,6 @@
 | | |
 |---|---|
 | Status | **Built**, against a sandbox. Ready for a provider integration and a pilot |
-| Owner | APM, Collections |
 | Code | [public/js/collect.js](../../public/js/collect.js), [server/server.js](../../server/server.js) (Smart Collect section), [views/pos.js](../../public/js/views/pos.js), [views/payments.js](../../public/js/views/payments.js) |
 | Tests | [tests/unit/collect.test.mjs](../../tests/unit/collect.test.mjs) (10), e2e scenarios "Smart Collect: …" (2) |
 | Depends on | A UPI collections provider (merchant VPA + payment webhook), and the sync server reachable over HTTPS |
