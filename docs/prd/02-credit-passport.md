@@ -5,7 +5,6 @@
 | | |
 |---|---|
 | Status | **Built** (phase 1: score, limit, guidance, export). Phases 2–3 are proposals |
-| Owner | APM, Credit |
 | Code | [public/js/credit.js](../../public/js/credit.js) (pure engine), [public/js/views/passport.js](../../public/js/views/passport.js) |
 | Tests | [tests/unit/credit.test.mjs](../../tests/unit/credit.test.mjs) (5), e2e scenario "credit passport: …" |
 | Depends on | Phase 1: nothing external. Phase 2: Account Aggregator / GST data. Phase 3: a regulated lender partner |
